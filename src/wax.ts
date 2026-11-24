@@ -91,8 +91,12 @@ export class DripSim {
       const speed = 0.92 * d.temp * Math.sqrt(d.mass)
       const oldY = d.y
       const oldTheta = d.theta
-      const dy = Math.min(top - 0.003 - oldY, g.y * speed * dt)
-      const dTheta = (gt * speed * dt) / r
+      const toRim = top - 0.003 - oldY
+      const vertical = g.y * speed * dt
+      const leavesRim = vertical > 0 && vertical >= toRim
+      const dy = Math.min(toRim, vertical)
+      const travelFraction = leavesRim ? Math.max(0, toRim) / vertical : 1
+      const dTheta = (gt * speed * dt * travelFraction) / r
       d.y += dy
       d.theta += dTheta
       const length = Math.hypot(dy, dTheta * r)
@@ -106,6 +110,12 @@ export class DripSim {
         const t = Math.max(0, 1 - d.travelled / length)
         this.leaveTrail(d, oldTheta + dTheta * t, oldY + dy * t, size * (0.52 + d.temp * 0.20))
         d.mass -= spacing * 0.53
+      }
+      if (leavesRim) {
+        this.release(d, g)
+        this.drips.splice(i, 1)
+        fell++
+        continue
       }
       const landed = d.y <= this.floorY + size * 0.2
       if (d.mass <= 0.08 || d.temp <= 0.03 || landed) {
