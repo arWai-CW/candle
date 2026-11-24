@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import './style.css'
+import { createAnimationLoop } from './animation'
 import { BlowDetector, MicInput } from './blow'
 import { createCandle, type Candle, type CandleKind } from './candles'
 import { MotionResponse, requestSensorAccess } from './motion'
@@ -15,7 +16,7 @@ const meter = document.querySelector<HTMLElement>('#meter > div')!
 const kindButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-kind]')]
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+const mobile = window.matchMedia('(pointer: coarse)')
 renderer.toneMapping = THREE.ACESFilmicToneMapping
 renderer.toneMappingExposure = 1.1
 renderer.setClearColor(0x080605)
@@ -52,7 +53,7 @@ let candle: CandleWithView = createCandle('birthday')
 scene.add(candle.group)
 
 // --- sensors -------------------------------------------------------------
-const motion = new MotionResponse()
+let motion = new MotionResponse()
 let dragTilt = { pitch: 0, roll: 0 }
 
 function screenAngle(): number {
@@ -63,11 +64,11 @@ function screenAngle(): number {
 }
 
 window.addEventListener('deviceorientation', (e) => {
-  motion.orient(e.beta, e.gamma)
+  if (isForeground()) motion.orient(e.beta, e.gamma)
 })
 
 window.addEventListener('devicemotion', (e) => {
-  motion.accelerate(e.acceleration, e.accelerationIncludingGravity, performance.now())
+  if (isForeground()) motion.accelerate(e.acceleration, e.accelerationIncludingGravity, performance.now())
 })
 
 // Drag to tilt when there is no motion sensor (desktop), hold to blow when there is no mic.
@@ -114,11 +115,18 @@ sensInput.addEventListener('input', () => {
   localStorage.setItem(SENS_KEY, sensInput.value)
 })
 
-async function startMic(ctx: AudioContext) {
+async function startMic() {
+  let ctx: AudioContext | undefined
   try {
+    const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!AC || !navigator.mediaDevices?.getUserMedia) throw new Error('No microphone input')
+    ctx = new AC()
+    void ctx.resume().catch(() => {})
     mic = await MicInput.start(ctx)
+    mic.setActive(isForeground())
   } catch {
     mic = null
+    void ctx?.close().catch(() => {})
   }
 }
 
@@ -151,43 +159,85 @@ function relight() {
 }
 
 let started = false
-let wakeLock: { release(): Promise<void> } | null = null
+let pageHidden = false
+let contextLost = false
+let wakeLock: WakeLockSentinel | null = null
+let wakeLockPending = false
+
+function isForeground() {
+  return !pageHidden && document.visibilityState === 'visible'
+}
+
+async function requestWakeLock() {
+  if (!started || !isForeground() || !navigator.wakeLock || wakeLockPending || (wakeLock && !wakeLock.released)) return
+  wakeLockPending = true
+  try {
+    const lock = await navigator.wakeLock.request('screen')
+    if (isForeground()) wakeLock = lock
+    else await lock.release()
+  } catch {
+    // Wake lock is optional and can be denied by the browser.
+  } finally {
+    wakeLockPending = false
+  }
+}
+
 intro.addEventListener('click', async () => {
   if (started) return
+  intro.classList.add('hidden')
+  hud.classList.remove('hidden')
+  started = true
+  candle.light()
+  syncAnimation()
+  // Start both permission requests directly from the tap.
   type PermissionSource = { requestPermission?: () => Promise<string> }
   const motionReady = requestSensorAccess(
     window.DeviceOrientationEvent as (typeof DeviceOrientationEvent & PermissionSource) | undefined,
     window.DeviceMotionEvent as (typeof DeviceMotionEvent & PermissionSource) | undefined,
   )
-  const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-  const ctx = AC ? new AC() : null
-  const micReady = ctx ? startMic(ctx) : Promise.resolve()
-  if (ctx) void ctx.resume()
-  intro.classList.add('hidden')
-  hud.classList.remove('hidden')
-  started = true
-  candle.light()
+  const micReady = startMic()
+  void requestWakeLock()
   const [motionAllowed] = await Promise.all([motionReady, micReady])
   if (!motionAllowed) showHint(mic ? '拖動畫面可以打側蠟燭' : '拖動畫面可以打側蠟燭 · 冇咪用，㩒住畫面吹', 4000)
   else if (!mic) showHint('冇咪用，㩒住畫面吹', 4000)
-  try {
-    const nav = navigator as unknown as { wakeLock?: { request(t: 'screen'): Promise<{ release(): Promise<void> }> } }
-    wakeLock = (await nav.wakeLock?.request('screen')) ?? null
-  } catch {
+})
+
+function syncPageActivity() {
+  const visible = isForeground()
+  mic?.setActive(visible)
+  if (visible) {
+    void requestWakeLock()
+  } else {
+    pointerDown = null
+    manualBlow = false
+    manualHeld = 0
+    motion = new MotionResponse()
+    void wakeLock?.release().catch(() => {})
     wakeLock = null
   }
+  syncAnimation()
+}
+
+document.addEventListener('visibilitychange', syncPageActivity)
+window.addEventListener('pagehide', () => {
+  pageHidden = true
+  syncPageActivity()
 })
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && started && wakeLock) {
-    const nav = navigator as unknown as { wakeLock?: { request(t: 'screen'): Promise<{ release(): Promise<void> }> } }
-    nav.wakeLock?.request('screen').then((l) => (wakeLock = l)).catch(() => {})
-  }
+window.addEventListener('pageshow', () => {
+  pageHidden = false
+  syncPageActivity()
+})
+window.addEventListener('click', () => {
+  // Safari can require a fresh user gesture after an audio interruption.
+  if (isForeground() && mic && !mic.available) mic.setActive(true)
 })
 
 // --- layout --------------------------------------------------------------
 function resize() {
-  const w = window.innerWidth
-  const h = window.innerHeight
+  const w = Math.max(1, window.innerWidth)
+  const h = Math.max(1, window.innerHeight)
+  const pixelRatio = Math.min(window.devicePixelRatio, mobile.matches ? 1.5 : 2)
+  if (pixelRatio !== renderer.getPixelRatio()) renderer.setPixelRatio(pixelRatio)
   renderer.setSize(w, h, false)
   camera.aspect = w / h
   const f = candle.focus
@@ -200,32 +250,29 @@ function resize() {
   contact.position.y = table.position.y + 0.003
   contact.scale.setScalar(candle.kind === 'birthday' ? 1.1 : 2.7)
   candle.setViewportHeight(h * renderer.getPixelRatio())
+  syncAnimation()
 }
-window.addEventListener('resize', resize)
-resize()
 
 // --- loop ----------------------------------------------------------------
-const clock = new THREE.Clock()
 const up = new THREE.Vector3()
 const airUp = new THREE.Vector3()
 let wind = 0
 let lastLit = false
+let lastMeter = '0.000'
 
-function frame() {
-  const dt = Math.min(0.05, clock.getDelta())
-  const time = clock.elapsedTime
-
+function frame(dt: number, time: number) {
   motion.update(dt, performance.now(), screenAngle(), camera.quaternion, dragTilt.pitch, dragTilt.roll)
   airUp.copy(motion.sceneGravity).negate()
   up.copy(airUp).multiplyScalar(9.81).add(motion.acceleration)
 
   let blowStrength = 0
-  if (mic) {
-    const state = detector.update(mic.read(), dt)
+  const activeMic = mic?.available ? mic : null
+  if (activeMic) {
+    const state = detector.update(activeMic.read(), dt)
     blowStrength = state.strength
     if (state.blown && candle.lit) blowOut()
   }
-  const holdBlow = manualBlow || (!!pointerDown && !pointerDown.moved && (!mic || !motion.hasOrientation))
+  const holdBlow = manualBlow || (!!pointerDown && !pointerDown.moved && (!activeMic || !motion.hasOrientation))
   const manualTarget = holdBlow ? 1 : 0
   wind += (Math.max(blowStrength, manualTarget * 0.9) - wind) * Math.min(1, dt / (holdBlow ? 0.25 : 0.2))
   if (holdBlow) manualHeld += dt
@@ -233,7 +280,11 @@ function frame() {
   if (manualHeld > 0.35 && candle.lit) blowOut()
 
   candle.update(dt, { gravity: motion.gravity, up, airUp, wind, shake: motion.shake, time })
-  meter.style.transform = `scaleX(${Math.min(1, wind).toFixed(3)})`
+  const meterValue = Math.min(1, wind).toFixed(3)
+  if (meterValue !== lastMeter) {
+    meter.style.transform = `scaleX(${meterValue})`
+    lastMeter = meterValue
+  }
 
   if (candle.lit !== lastLit) {
     lastLit = candle.lit
@@ -241,7 +292,6 @@ function frame() {
   }
 
   renderer.render(scene, camera)
-  requestAnimationFrame(frame)
 }
 let manualHeld = 0
 
@@ -250,4 +300,20 @@ function blowOut() {
   manualHeld = 0
 }
 
-requestAnimationFrame(frame)
+const animation = createAnimationLoop(frame)
+function syncAnimation() {
+  if (!isForeground() || contextLost) animation.stop()
+  else if (started) animation.start()
+  else animation.drawOnce()
+}
+canvas.addEventListener('webglcontextlost', () => {
+  contextLost = true
+  syncAnimation()
+})
+canvas.addEventListener('webglcontextrestored', () => {
+  contextLost = false
+  resize()
+})
+window.addEventListener('resize', resize)
+mobile.addEventListener('change', resize)
+resize()
