@@ -31,6 +31,20 @@ describe('DripSim', () => {
     expect(fell).toBe(1)
   })
 
+  it('continues released wax along gravity and keeps a puddle when it lands on the holder', () => {
+    const sim = new DripSim(0.5, 0, 1800, 1.5)
+    sim.spawn(0, 0.4, 0.8)
+    sim.step(1 / 60, { x: 1, y: 0, z: 0 }, 0.4)
+    const drop = sim.drops[0]
+    const startX = drop.x
+    step(sim, { x: 0, y: -1, z: 0 }, 0.4, 0.6)
+    expect(drop.x).toBeGreaterThan(startX)
+    expect(drop.y).toBeLessThan(0.01)
+    expect(drop.landed).toBe(true)
+    step(sim, { x: 1, y: 0, z: 0 }, 0.4, 3)
+    expect(sim.drops).toEqual([drop])
+  })
+
   it('melts beads above the burning top', () => {
     const sim = new DripSim(0.5)
     sim.spawn(0, 2, 1)
