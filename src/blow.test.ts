@@ -116,6 +116,19 @@ describe('BlowDetector', () => {
     expect(d.floor).toBeGreaterThan(-35)
     expect(run(d, room, 0.5)).toBe(false)
   })
+
+  it('still detects a soft blow after a strong blow and its lingering tail', () => {
+    const d = new BlowDetector(1.6)
+    const quiet = { ...room, level: -52 }
+    run(d, quiet, 0.5)
+    const strong = run(d, { ...gust, level: -12 }, 0.35)
+    const tail = run(d, { ...gust, level: -24 }, 2.8)
+    expect(strong || tail).toBe(true)
+    run(d, quiet, 0.2)
+    const soft = run(d, { ...gust, level: -42 }, 0.35)
+    const release = run(d, quiet, 0.35)
+    expect(soft || release).toBe(true)
+  })
 })
 
 describe('MicInput', () => {

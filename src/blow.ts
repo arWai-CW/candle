@@ -69,7 +69,10 @@ export class BlowDetector {
       if (this.released >= 0.15) this.armed = true
     }
 
-    if (!blowLike || !this.armed) this.learnFloor(frame.level, dt, excess < minExcess ? 1.5 : 6)
+    if (excess < 0) this.learnFloor(frame.level, dt, 0.25)
+    else if (!blowLike && this.armed && this.candidateAge === 0) {
+      this.learnFloor(frame.level, dt, excess < minExcess ? 1.5 : 6)
+    }
 
     let blown = false
     if (this.armed && (blowLike || this.candidateAge > 0)) {
