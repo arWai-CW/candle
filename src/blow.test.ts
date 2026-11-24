@@ -174,6 +174,14 @@ describe('BlowDetector', () => {
     expect(run(d, ambient, 0.5)).toBe(false)
     expect(run(d, dip, 0.25)).toBe(false)
   })
+
+  it('does not combine separate short noises when the level returns to the floor', () => {
+    const d = new BlowDetector(1.6)
+    run(d, room, 0.5)
+    expect(run(d, gust, 0.18)).toBe(false)
+    expect(run(d, room, 0.045)).toBe(false)
+    expect(pulse(d, gust, 0.15)).toBe(false)
+  })
 })
 
 describe('MicInput', () => {

@@ -93,7 +93,7 @@ export class BlowDetector {
         this.resetCandidate()
         this.released = 0
         this.armed = false
-      } else if (this.sustained === 0) {
+      } else if (this.sustained === 0 || (qualifiedAt === undefined && excess <= 3)) {
         this.resetCandidate()
       }
     }
