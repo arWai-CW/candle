@@ -24,10 +24,30 @@ renderer.setClearColor(0x080605)
 const scene = new THREE.Scene()
 scene.fog = new THREE.Fog(0x080605, 9, 22)
 const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 60)
-scene.add(new THREE.HemisphereLight(0x6a5a4a, 0x0a0806, 0.35))
+// Low-key warm fill and a restrained cool rim leave the flame as the key light.
+scene.add(new THREE.HemisphereLight(0xa5b6c8, 0x201713, 0.3))
+const key = new THREE.DirectionalLight(0xffd1a4, 0.55)
+key.position.set(-3, 4, 3)
+scene.add(key)
+const rim = new THREE.DirectionalLight(0x8296b9, 0.4)
+rim.position.set(3, 3, -2)
+scene.add(rim)
 
-const table = new THREE.Mesh(new THREE.PlaneGeometry(60, 60).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#2a1d15', roughness: 0.7 }))
+const table = new THREE.Mesh(new THREE.PlaneGeometry(60, 60).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#15110e', roughness: 0.7 }))
 scene.add(table)
+
+// Soft contact shading grounds the objects without six shadow-map renders per flame.
+const contactCanvas = document.createElement('canvas')
+contactCanvas.width = contactCanvas.height = 128
+const contactCtx = contactCanvas.getContext('2d')!
+const contactGradient = contactCtx.createRadialGradient(64, 64, 8, 64, 64, 64)
+contactGradient.addColorStop(0, 'rgba(0,0,0,0.65)')
+contactGradient.addColorStop(0.55, 'rgba(0,0,0,0.4)')
+contactGradient.addColorStop(1, 'rgba(0,0,0,0)')
+contactCtx.fillStyle = contactGradient
+contactCtx.fillRect(0, 0, 128, 128)
+const contact = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(contactCanvas), transparent: true, depthWrite: false }))
+scene.add(contact)
 
 let candle: CandleWithView = createCandle('birthday')
 scene.add(candle.group)
@@ -227,6 +247,8 @@ function resize() {
   camera.lookAt(f.centre)
   camera.updateProjectionMatrix()
   table.position.y = candle.kind === 'incense' ? -0.55 : -0.06
+  contact.position.y = table.position.y + 0.003
+  contact.scale.setScalar(candle.kind === 'birthday' ? 1.1 : 2.7)
   candle.setViewportHeight(h * renderer.getPixelRatio())
   syncAnimation()
 }

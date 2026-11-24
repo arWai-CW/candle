@@ -4,6 +4,7 @@ import { Flame, getGlowTexture } from './flame'
 import { Smoke } from './smoke'
 import { WaxTop } from './wax-top'
 import { IncenseBurn } from './incense-burn'
+import { WaxTrailGeometry } from './wax-trails'
 
 const Y_AXIS = new THREE.Vector3(0, 1, 0)
 
@@ -39,7 +40,7 @@ export interface Candle {
 
 /** Wax that glows warm near the flame, like light scattering through it. */
 function waxMaterial(color: THREE.ColorRepresentation, uniforms: { uTop: { value: number }; uGlow: { value: number } }, map?: THREE.Texture, fill = 0) {
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0, map: map ?? null })
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.42, metalness: 0, map: map ?? null, bumpMap: grainTexture(), bumpScale: 0.008 })
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uTop = uniforms.uTop
     shader.uniforms.uGlow = uniforms.uGlow
@@ -54,10 +55,29 @@ function waxMaterial(color: THREE.ColorRepresentation, uniforms: { uTop: { value
       .replace('#include <common>', '#include <common>\nvarying float vWorldY;\nuniform float uTop;\nuniform float uGlow;\nuniform float uWaxFill;')
       .replace(
         '#include <emissivemap_fragment>',
-        '#include <emissivemap_fragment>\nfloat below = max(0.0, uTop - vWorldY);\ntotalEmissiveRadiance += vec3(1.0, 0.45, 0.15) * uGlow * exp(-below * 5.0) * 0.6 + diffuseColor.rgb * uWaxFill;',
+        '#include <emissivemap_fragment>\nfloat below = max(0.0, uTop - vWorldY);\ntotalEmissiveRadiance += vec3(1.0, 0.27, 0.035) * uGlow * exp(-below * 3.4) * 1.1 + diffuseColor.rgb * uWaxFill;',
       )
   }
   return mat
+}
+
+let grain: THREE.CanvasTexture | undefined
+/** Fine, deterministic surface grain shared by wax and the sand. */
+function grainTexture(): THREE.CanvasTexture {
+  if (grain) return grain
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = 128
+  const ctx = canvas.getContext('2d')!
+  const data = ctx.createImageData(128, 128)
+  for (let i = 0; i < 128 * 128; i++) {
+    const n = Math.sin(i * 127.1 + 311.7) * 43758.5453
+    const v = 110 + (n - Math.floor(n)) * 55
+    data.data.set([v, v, v, 255], i * 4)
+  }
+  ctx.putImageData(data, 0, 0)
+  grain = new THREE.CanvasTexture(canvas)
+  grain.wrapS = grain.wrapT = THREE.RepeatWrapping
+  return grain
 }
 
 function stripeTexture(base: string, stripe: string): THREE.CanvasTexture {
@@ -107,7 +127,7 @@ const SPECS: Record<'birthday' | 'white', WaxSpec> = {
     tiltDripRate: 2.2,
     waxColor: '#ffffff',
     dripColors: ['#ff8fb8', '#ffffff'],
-    flame: { height: 0.36, width: 0.075, light: 1.6 },
+    flame: { height: 0.43, width: 0.04, light: 1.6 },
     wickLength: 0.09,
   },
   white: {
@@ -120,7 +140,7 @@ const SPECS: Record<'birthday' | 'white', WaxSpec> = {
     tiltDripRate: 1.8,
     waxColor: '#f4eee2',
     dripColors: ['#f4eee2'],
-    flame: { height: 0.62, width: 0.13, light: 4 },
+    flame: { height: 0.74, width: 0.065, light: 4 },
     wickLength: 0.16,
   },
 }
@@ -140,7 +160,7 @@ class WaxCandle implements Candle {
   private readonly ember: THREE.Mesh
   private readonly emberMat: THREE.MeshBasicMaterial
   private readonly sim: DripSim
-  private readonly trails: THREE.InstancedMesh
+  private readonly trails: THREE.Mesh<WaxTrailGeometry, THREE.MeshStandardMaterial>
   private readonly heads: THREE.InstancedMesh
   private readonly deposits: THREE.InstancedMesh
   private readonly smoke = new Smoke(300)
@@ -150,6 +170,7 @@ class WaxCandle implements Candle {
   private readonly runoffColors?: THREE.Color[]
   private emberHeat = 0
   private wispTimer = 0
+  private smokeAcc = 0
   private spawnAcc = 0
   private readonly tmpV = new THREE.Vector3()
   private readonly tmpM = new THREE.Matrix4()
@@ -191,8 +212,9 @@ class WaxCandle implements Candle {
     this.wick = new THREE.Mesh(wickGeo, new THREE.MeshStandardMaterial({ color: '#1a1410', roughness: 0.9 }))
     this.wick.rotation.z = 0.08
     this.group.add(this.wick)
-    this.emberMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.35, 0.05), transparent: true, opacity: 0, toneMapped: false })
-    this.ember = new THREE.Mesh(new THREE.SphereGeometry(wickR * 1.3, 8, 6), this.emberMat)
+    this.emberMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.8, 0.17, 0.01), transparent: true, opacity: 0, toneMapped: false })
+    this.ember = new THREE.Mesh(new THREE.SphereGeometry(wickR * 0.9, 8, 6), this.emberMat)
+    this.ember.scale.set(1, 0.5, 0.8)
     this.wick.add(this.ember)
     this.ember.position.y = spec.wickLength
 
@@ -201,7 +223,9 @@ class WaxCandle implements Candle {
 
     this.sim = new DripSim(spec.radius, 0, 980, plateRadius * 0.92)
     const blob = new THREE.SphereGeometry(1, 12, 8)
-    const sideWax = this.stripes ? waxMaterial(spec.waxColor, this.glowUniforms) : this.body.material
+    const sideWax = waxMaterial('#ffffff', this.glowUniforms)
+    sideWax.vertexColors = true
+    sideWax.bumpMap = null
     const molten = waxMaterial(spec.waxColor, this.glowUniforms)
     molten.roughness = 0.38
     molten.transparent = true
@@ -209,11 +233,13 @@ class WaxCandle implements Candle {
     molten.depthWrite = false
     const pooled = waxMaterial('#ffffff', this.glowUniforms, undefined, 0.075)
     pooled.roughness = 0.48
-    this.trails = new THREE.InstancedMesh(blob, sideWax, this.sim.maxBeads)
+    this.trails = new THREE.Mesh(new WaxTrailGeometry(this.sim.maxBeads), sideWax)
+    this.trails.frustumCulled = false
+    this.group.add(this.trails)
     this.heads = new THREE.InstancedMesh(blob, molten, 64)
     this.deposits = new THREE.InstancedMesh(blob, pooled, 32)
     this.runoffColors = this.stripes ? [new THREE.Color(stripeColor), new THREE.Color(spec.waxColor)] : undefined
-    for (const batch of [this.trails, this.heads, this.deposits]) {
+    for (const batch of [this.heads, this.deposits]) {
       batch.count = 0
       batch.frustumCulled = false
       batch.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
@@ -249,6 +275,7 @@ class WaxCandle implements Candle {
   reset() {
     this.height = this.spec.height
     this.burnedOut = false
+    this.smokeAcc = 0
     this.top.melt.reset()
     this.top.update(0, false, new THREE.Vector3(0, -1, 0))
     this.spawnAcc = 0
@@ -314,8 +341,17 @@ class WaxCandle implements Candle {
     this.smoke.update(dt, at, up, env.airUp, env.wind, env.time)
     if (this.wispTimer > 0) {
       this.wispTimer -= dt
-      const n = Math.random() < this.wispTimer ? 2 : 1
-      for (let i = 0; i < n; i++) this.smoke.emit(at, up, { speed: 0.35, size: spec.radius * 0.6 + 0.05, life: 2.6, alpha: 0.32 * Math.min(1, this.wispTimer) })
+      this.smokeAcc += dt * 85
+      while (this.smokeAcc >= 1) {
+        this.smokeAcc -= 1
+        const birthday = this.kind === 'birthday'
+        this.smoke.emit(at, up, {
+          speed: birthday ? 0.3 : 0.43,
+          size: birthday ? 0.043 : 0.095,
+          life: birthday ? 1.6 : 3.2,
+          alpha: (birthday ? 0.1 : 0.11) * Math.min(1, this.wispTimer),
+        })
+      }
     }
 
     this.renderWax()
@@ -328,7 +364,8 @@ class WaxCandle implements Candle {
   private renderWax() {
     if (!this.sim.dirty && this.sim.drips.length === 0) return
     const r = this.spec.radius
-    const batches = [this.trails, this.heads, this.deposits]
+    this.trails.geometry.update(this.sim.beads, r, this.runoffColors ?? this.dripColors)
+    const batches = [this.heads, this.deposits]
     for (const batch of batches) batch.count = 0
     const place = (batch: THREE.InstancedMesh, color?: THREE.Color) => {
       const i = batch.count
@@ -338,7 +375,7 @@ class WaxCandle implements Candle {
       if (color) batch.setColorAt(i, color)
       batch.count++
     }
-    const onSide = (theta: number, y: number, fromTheta: number, fromY: number, size: number, color: number, hot = false) => {
+    const onSide = (theta: number, y: number, fromTheta: number, fromY: number, size: number, color: number) => {
       const angle = (theta + fromTheta) * 0.5
       const dx = (theta - fromTheta) * r
       const dy = y - fromY
@@ -352,8 +389,8 @@ class WaxCandle implements Candle {
       this.tmpQ.setFromRotationMatrix(this.tmpM.makeBasis(this.radial, this.tangent, this.cross))
       this.tmpV.copy(this.radial).multiplyScalar(r + size * 0.05)
       this.tmpV.y = (y + fromY) * 0.5
-      this.tmpS.set(size * 0.64, length * 0.65 + size * (hot ? 1.13 : 0.85), size * (hot ? 0.83 : 0.85))
-      place(hot ? this.heads : this.trails, this.runoffColors?.[color])
+      this.tmpS.set(size * 0.64, length * 0.65 + size * 1.13, size * 0.83)
+      place(this.heads, this.runoffColors?.[color])
     }
     for (const d of this.sim.drops) {
       this.tmpV.set(d.x, d.y, d.z)
@@ -362,8 +399,7 @@ class WaxCandle implements Candle {
       if (d.landed) place(this.deposits, this.dripColors[d.color])
       else place(this.heads, this.runoffColors?.[d.color])
     }
-    for (const b of this.sim.beads) onSide(b.theta, b.y, b.fromTheta, b.fromY, b.size, b.color)
-    for (const d of this.sim.drips) onSide(d.theta, d.y, d.trailTheta, d.trailY, this.sim.size(d.mass), d.color, true)
+    for (const d of this.sim.drips) onSide(d.theta, d.y, d.trailTheta, d.trailY, this.sim.size(d.mass), d.color)
     for (const batch of batches) {
       batch.instanceMatrix.needsUpdate = true
       if (batch.instanceColor) batch.instanceColor.needsUpdate = true
@@ -373,6 +409,7 @@ class WaxCandle implements Candle {
 
   dispose() {
     this.group.traverse((o) => {
+      if (o instanceof THREE.InstancedMesh) o.dispose()
       if (o instanceof THREE.Mesh || o instanceof THREE.Points) o.geometry.dispose()
     })
   }
@@ -380,7 +417,7 @@ class WaxCandle implements Candle {
 
 function plate(radius: number): THREE.Mesh {
   const pts = [new THREE.Vector2(0, -0.06), new THREE.Vector2(radius, -0.06), new THREE.Vector2(radius * 1.08, 0.04), new THREE.Vector2(radius * 1.05, 0.05), new THREE.Vector2(radius * 0.92, 0), new THREE.Vector2(0, 0)]
-  return new THREE.Mesh(new THREE.LatheGeometry(pts, 64), new THREE.MeshStandardMaterial({ color: '#3b2d24', roughness: 0.35, metalness: 0.2 }))
+  return new THREE.Mesh(new THREE.LatheGeometry(pts, 64), new THREE.MeshStandardMaterial({ color: '#77665a', roughness: 0.45, metalness: 0.1 }))
 }
 
 interface AshBit {
@@ -416,7 +453,7 @@ function ashGeometry() {
 class Incense implements Candle {
   readonly kind = 'incense' as const
   readonly group = new THREE.Group()
-  readonly focus = { centre: new THREE.Vector3(0, 1.3, 0), halfWidth: 1.0, halfHeight: 1.9 }
+  readonly focus = { centre: new THREE.Vector3(0, 1.5, 0), halfWidth: 1.4, halfHeight: 2.9 }
   burnedOut = false
   private readonly burn = new IncenseBurn(STICK_LEN + INCENSE_BASE, INCENSE_BASE + BARE + 0.02)
   private heat = 0
@@ -449,9 +486,9 @@ class Incense implements Candle {
     stick.scale.y = BARE + 0.1
     this.group.add(stick)
 
-    const coatGeo = new THREE.CylinderGeometry(0.026, 0.026, 1, 10)
+    const coatGeo = new THREE.CylinderGeometry(0.026, 0.026, 1, 16)
     coatGeo.translate(0, 0.5, 0)
-    this.coat = new THREE.Mesh(coatGeo, new THREE.MeshStandardMaterial({ color: '#7a2f22', roughness: 0.9 }))
+    this.coat = new THREE.Mesh(coatGeo, new THREE.MeshStandardMaterial({ color: '#875039', roughness: 0.95, bumpMap: grainTexture(), bumpScale: 0.01 }))
     this.coat.position.y = INCENSE_BASE + BARE
     this.group.add(this.coat)
 
@@ -469,9 +506,6 @@ class Incense implements Candle {
     this.group.add(this.glow)
     this.emberLight = new THREE.PointLight(0xff5a1e, 0, 0, 2)
     this.group.add(this.emberLight)
-    const fill = new THREE.DirectionalLight(0xffc89a, 0.9)
-    fill.position.set(1.2, 3, 2.5)
-    this.group.add(fill, fill.target)
     this.group.add(this.smoke.points)
     this.layout()
   }
@@ -546,18 +580,18 @@ class Incense implements Candle {
     const flick = 0.9 + 0.1 * Math.sin(env.time * 9.1) * Math.sin(env.time * 3.3)
     this.emberMat.opacity = Math.min(1, this.heat) * flick
     this.emberMat.color.setRGB(1, 0.25 + 0.3 * Math.max(0, this.heat - 1), 0.05)
-    const gs = 0.22 * this.heat * flick
+    const gs = 0.17 * this.heat * flick
     this.glow.scale.set(gs, gs, 1)
     this.glow.material.opacity = Math.min(1, this.heat)
-    this.emberLight.intensity = 2.5 * this.heat * flick
+    this.emberLight.intensity = 0.35 * this.heat * flick
 
     const at = this.smokeSource.set(0, this.burn.top + 0.01, 0)
     this.smoke.update(dt, at, up, env.airUp, env.wind, env.time)
     if (this.heat > 0.15) {
-      this.emitAcc += dt * 45 * Math.min(1, this.heat)
+      this.emitAcc += dt * 85 * Math.min(1, this.heat)
       while (this.emitAcc >= 1) {
         this.emitAcc -= 1
-        this.smoke.emit(at, up, { speed: 0.5, size: 0.035, life: 4.5, alpha: 0.22 * Math.min(1, this.heat) })
+        this.smoke.emit(at, up, { speed: 0.38, size: 0.075, life: 3.4, alpha: 0.12 * Math.min(1, this.heat) })
       }
     }
     this.updateAsh(dt, env)
@@ -633,6 +667,7 @@ class Incense implements Candle {
 
   dispose() {
     this.group.traverse((o) => {
+      if (o instanceof THREE.InstancedMesh) o.dispose()
       if (o instanceof THREE.Mesh || o instanceof THREE.Points) o.geometry.dispose()
     })
   }
@@ -650,10 +685,23 @@ function burner(): THREE.Group {
     new THREE.Vector2(0.92, 0.08),
     new THREE.Vector2(0.84, 0.0),
   ]
-  const bowl = new THREE.Mesh(new THREE.LatheGeometry(pts, 64), new THREE.MeshStandardMaterial({ color: '#8a6a2c', roughness: 0.35, metalness: 0.75 }))
-  const sand = new THREE.Mesh(new THREE.CircleGeometry(0.86, 48).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#9b9488', roughness: 1 }))
+  const bronze = new THREE.MeshStandardMaterial({ color: '#ab8659', roughness: 0.38, metalness: 0.35, bumpMap: grainTexture(), bumpScale: 0.006 })
+  const bowl = new THREE.Mesh(new THREE.LatheGeometry(pts, 64), bronze)
+  const lip = new THREE.Mesh(new THREE.TorusGeometry(0.92, 0.025, 8, 64).rotateX(Math.PI / 2), bronze)
+  lip.position.y = 0.055
+  const foot = new THREE.Mesh(new THREE.TorusGeometry(0.56, 0.025, 8, 64).rotateX(Math.PI / 2), bronze)
+  foot.position.y = -0.51
+  const sand = new THREE.Mesh(new THREE.CircleGeometry(0.86, 48).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#d1c4b2', roughness: 1, map: grainTexture(), bumpMap: grainTexture(), bumpScale: 0.035 }))
   sand.position.y = SAND_Y
-  g.add(bowl, sand)
+  const grains = new THREE.InstancedMesh(new THREE.SphereGeometry(0.009, 4, 3), new THREE.MeshStandardMaterial({ color: '#8c8276', roughness: 1 }), 180)
+  const matrix = new THREE.Matrix4()
+  for (let i = 0; i < 180; i++) {
+    const a = i * 2.39996
+    const r = Math.sqrt((i + 0.5) / 180) * 0.83
+    matrix.makeTranslation(Math.cos(a) * r, SAND_Y + 0.003, Math.sin(a) * r)
+    grains.setMatrixAt(i, matrix)
+  }
+  g.add(bowl, lip, foot, sand, grains)
   return g
 }
 

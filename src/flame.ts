@@ -1,60 +1,61 @@
 import * as THREE from 'three'
 
 const vertex = /* glsl */ `
+varying vec3 vPosition;
+void main() {
+  vPosition = position;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`
+
+// Integrate luminous gas through a small volume, rather than stacking opaque teardrops.
+// The narrow dark fuel cone, blue reaction zone and warm core remain visible from any angle.
+const fragment = /* glsl */ `
+uniform vec3 uCamera;
 uniform float uTime;
 uniform float uFlicker;
-uniform float uHeight;
 uniform float uSeed;
-varying float vT;
-varying vec3 vNormalV;
-varying vec3 vViewDir;
+varying vec3 vPosition;
 void main() {
-  vec3 p = position;
-  float t = clamp(p.y / uHeight, 0.0, 1.0);
-  vT = t;
-  float tt = uTime + uSeed;
-  float sx = sin(tt * 7.1 + p.y * 9.0) * 0.5 + sin(tt * 13.3 + 1.3) * 0.3 + sin(tt * 23.7 + p.y * 17.0) * 0.2;
-  float sz = sin(tt * 8.3 + 2.0 + p.y * 7.0) * 0.5 + sin(tt * 17.9) * 0.3 + sin(tt * 29.1 + p.y * 13.0) * 0.2;
-  float amp = uFlicker * t * t * uHeight * 0.14;
-  p.x += sx * amp;
-  p.z += sz * amp;
-  p.y *= 1.0 + uFlicker * 0.07 * sin(tt * 11.0) * sin(tt * 3.7);
-  vec4 mv = modelViewMatrix * vec4(p, 1.0);
-  vNormalV = normalize(normalMatrix * normal);
-  vViewDir = normalize(-mv.xyz);
-  gl_Position = projectionMatrix * mv;
-}
-`
-
-const fragment = /* glsl */ `
-uniform float uIntensity;
-uniform float uEdgePower;
-uniform vec3 uBase;
-uniform vec3 uMid;
-uniform vec3 uTip;
-varying float vT;
-varying vec3 vNormalV;
-varying vec3 vViewDir;
-void main() {
-  float facing = abs(dot(normalize(vNormalV), normalize(vViewDir)));
-  float edge = pow(facing, uEdgePower);
-  vec3 col = mix(uBase, uMid, smoothstep(0.02, 0.28, vT));
-  col = mix(col, uTip, smoothstep(0.45, 1.0, vT));
-  float alpha = edge * (1.0 - smoothstep(0.65, 1.0, vT)) * (0.35 + 0.65 * smoothstep(0.0, 0.12, vT));
-  gl_FragColor = vec4(col, alpha * uIntensity);
-}
-`
-
-function teardrop(height: number, width: number): THREE.LatheGeometry {
-  const pts: THREE.Vector2[] = []
-  const n = 28
-  for (let i = 0; i <= n; i++) {
-    const t = i / n
-    const r = (width * Math.pow(t, 0.5) * Math.pow(1 - t, 1.25)) / 0.357
-    pts.push(new THREE.Vector2(Math.max(r, 0.0001), t * height))
+  vec3 ray = normalize(vPosition - uCamera);
+  vec3 inv = 1.0 / (ray + vec3(0.000001));
+  vec3 a = (vec3(-1.3, -0.035, -1.3) - uCamera) * inv;
+  vec3 b = (vec3(1.3, 1.085, 1.3) - uCamera) * inv;
+  vec3 nearV = min(a, b);
+  vec3 farV = max(a, b);
+  float start = max(0.0, max(nearV.x, max(nearV.y, nearV.z)));
+  float end = min(farV.x, min(farV.y, farV.z));
+  if (end <= start) discard;
+  float stepSize = (end - start) / 32.0;
+  vec3 energy = vec3(0.0);
+  float opacity = 0.0;
+  float time = uTime + uSeed;
+  for (int i = 0; i < 32; i++) {
+    vec3 p = uCamera + ray * (start + (float(i) + 0.5) * stepSize);
+    float y = clamp(p.y, 0.001, 0.999);
+    float sway = pow(y, 1.8);
+    p.x -= sway * (sin(time * 3.7 - y * 6.0) * 0.13 + sin(time * 8.1 - y * 12.0) * 0.05) * uFlicker;
+    p.z -= sway * sin(time * 4.3 - y * 8.0) * 0.1 * uFlicker;
+    float profile = 2.65 * pow(y, 0.43) * pow(1.0 - y, 1.05);
+    profile *= 1.0 + 0.035 * sin(y * 25.0 - time * 9.0) * uFlicker;
+    float r = length(p.xz) / max(0.001, profile);
+    float density = exp(-r * r) * (1.0 - smoothstep(0.86, 1.0, r));
+    density *= smoothstep(0.0, 0.04, p.y) * (1.0 - smoothstep(0.94, 1.0, p.y));
+    float fuelCone = (1.0 - smoothstep(0.08, 0.33, y)) * (1.0 - smoothstep(0.12, 0.55, r));
+    density *= 1.0 - fuelCone * 0.97;
+    float hot = exp(-r * r * 7.0) * smoothstep(0.1, 0.35, y);
+    vec3 warm = mix(vec3(3.2, 0.35, 0.008), vec3(12.0, 5.5, 1.7), hot);
+    vec3 emission = mix(vec3(0.015, 0.065, 0.28), warm, smoothstep(0.1, 0.17, y));
+    float alpha = 1.0 - exp(-density * stepSize * 2.8);
+    energy += (1.0 - opacity) * alpha * emission;
+    opacity += (1.0 - opacity) * alpha;
   }
-  return new THREE.LatheGeometry(pts, 24)
+  if (opacity < 0.003) discard;
+  gl_FragColor = vec4(energy / max(opacity, 0.001), opacity);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
 }
+`
 
 let glowTexture: THREE.Texture | null = null
 export function getGlowTexture(): THREE.Texture {
@@ -93,8 +94,7 @@ export class Flame {
   target = 0
   readonly dir = new THREE.Vector3(0, 1, 0)
   private readonly pivot = new THREE.Group()
-  private readonly outer: THREE.ShaderMaterial
-  private readonly inner: THREE.ShaderMaterial
+  private readonly volume: THREE.ShaderMaterial
   private readonly glow: THREE.Sprite
   private readonly halo: THREE.Sprite
   private readonly tmp = new THREE.Vector3()
@@ -106,52 +106,26 @@ export class Flame {
     readonly width: number,
     readonly lightIntensity = 3,
   ) {
-    const common = {
+    this.volume = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      side: THREE.DoubleSide,
-      toneMapped: false,
+      side: THREE.BackSide,
+      vertexShader: vertex,
+      fragmentShader: fragment,
+      uniforms: {
+        uCamera: { value: new THREE.Vector3() },
+        uTime: { value: 0 },
+        uFlicker: { value: 1 },
+        uSeed: { value: Math.random() * 100 },
+      },
+    })
+    const gas = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.12, 2.6).translate(0, 0.525, 0), this.volume)
+    gas.scale.set(width, height, width)
+    gas.renderOrder = 2
+    gas.onBeforeRender = (_renderer, _scene, camera) => {
+      gas.worldToLocal(this.volume.uniforms.uCamera.value.setFromMatrixPosition(camera.matrixWorld))
     }
-    const seed = Math.random() * 100
-    this.outer = new THREE.ShaderMaterial({
-      ...common,
-      vertexShader: vertex,
-      fragmentShader: fragment,
-      uniforms: {
-        uTime: { value: 0 },
-        uFlicker: { value: 1 },
-        uHeight: { value: height },
-        uSeed: { value: seed },
-        uIntensity: { value: 1 },
-        uEdgePower: { value: 1.6 },
-        uBase: { value: new THREE.Color(0.12, 0.2, 0.85) },
-        uMid: { value: new THREE.Color(1.0, 0.55, 0.14) },
-        uTip: { value: new THREE.Color(0.85, 0.25, 0.04) },
-      },
-    })
-    this.inner = new THREE.ShaderMaterial({
-      ...common,
-      vertexShader: vertex,
-      fragmentShader: fragment,
-      uniforms: {
-        uTime: { value: 0 },
-        uFlicker: { value: 1 },
-        uHeight: { value: height * 0.62 },
-        uSeed: { value: seed },
-        uIntensity: { value: 1 },
-        uEdgePower: { value: 0.7 },
-        uBase: { value: new THREE.Color(0.3, 0.42, 1.0) },
-        uMid: { value: new THREE.Color(1.0, 0.93, 0.7) },
-        uTip: { value: new THREE.Color(1.0, 0.75, 0.35) },
-      },
-    })
-    const outerMesh = new THREE.Mesh(teardrop(height, width), this.outer)
-    const innerMesh = new THREE.Mesh(teardrop(height * 0.62, width * 0.55), this.inner)
-    innerMesh.position.y = height * 0.04
-    outerMesh.renderOrder = 2
-    innerMesh.renderOrder = 3
-    this.pivot.add(outerMesh, innerMesh)
+    this.pivot.add(gas)
     this.pivot.position.y = -height * 0.08
 
     const glowMat = new THREE.SpriteMaterial({
@@ -192,10 +166,8 @@ export class Flame {
     const breathe = 1 + 0.04 * Math.sin(t * 5.3) + 0.03 * Math.sin(t * 12.7)
     this.pivot.scale.set(lvl * squeeze, lvl * stretch * breathe, lvl * squeeze)
     this.pivot.visible = lvl > 0.01
-    for (const m of [this.outer, this.inner]) {
-      m.uniforms.uTime.value = t
-      m.uniforms.uFlicker.value = flicker
-    }
+    this.volume.uniforms.uTime.value = t
+    this.volume.uniforms.uFlicker.value = flicker
 
     const flick = 0.85 + 0.1 * Math.sin(t * 17.3) + 0.06 * Math.sin(t * 31.1) - wind * 0.3
     const centre = this.tmp.copy(this.dir).multiplyScalar(this.height * 0.35 * lvl)
@@ -203,10 +175,10 @@ export class Flame {
     this.halo.position.copy(centre)
     const gs = this.height * 2.2 * lvl * flick
     this.glow.scale.set(gs, gs, 1)
-    this.glow.material.opacity = 0.55 * lvl
+    this.glow.material.opacity = 0.16 * lvl
     const hs = this.height * 7 * lvl * (0.95 + 0.05 * flick)
     this.halo.scale.set(hs, hs, 1)
-    this.halo.material.opacity = 0.14 * lvl
+    this.halo.material.opacity = 0.035 * lvl
     this.light.position.copy(centre)
     this.light.intensity = this.lightIntensity * lvl * flick
   }
