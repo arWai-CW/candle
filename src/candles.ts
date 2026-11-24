@@ -4,6 +4,7 @@ import { Flame, getGlowTexture } from './flame'
 import { Smoke } from './smoke'
 import { WaxTop } from './wax-top'
 import { IncenseBurn } from './incense-burn'
+import { WaxTrailGeometry } from './wax-trails'
 
 const Y_AXIS = new THREE.Vector3(0, 1, 0)
 
@@ -159,7 +160,7 @@ class WaxCandle implements Candle {
   private readonly ember: THREE.Mesh
   private readonly emberMat: THREE.MeshBasicMaterial
   private readonly sim: DripSim
-  private readonly trails: THREE.InstancedMesh
+  private readonly trails: THREE.Mesh<WaxTrailGeometry, THREE.MeshStandardMaterial>
   private readonly heads: THREE.InstancedMesh
   private readonly deposits: THREE.InstancedMesh
   private readonly smoke = new Smoke(300)
@@ -222,7 +223,9 @@ class WaxCandle implements Candle {
 
     this.sim = new DripSim(spec.radius, 0, 980, plateRadius * 0.92)
     const blob = new THREE.SphereGeometry(1, 12, 8)
-    const sideWax = this.stripes ? waxMaterial(spec.waxColor, this.glowUniforms) : this.body.material
+    const sideWax = waxMaterial('#ffffff', this.glowUniforms)
+    sideWax.vertexColors = true
+    sideWax.bumpMap = null
     const molten = waxMaterial(spec.waxColor, this.glowUniforms)
     molten.roughness = 0.38
     molten.transparent = true
@@ -230,12 +233,13 @@ class WaxCandle implements Candle {
     molten.depthWrite = false
     const pooled = waxMaterial('#ffffff', this.glowUniforms, undefined, 0.075)
     pooled.roughness = 0.48
-    // Straight-sided links keep cooled runoff continuous; stretched spheres leave scalloped seams.
-    this.trails = new THREE.InstancedMesh(new THREE.CylinderGeometry(1, 1, 2, 10, 1), sideWax, this.sim.maxBeads)
+    this.trails = new THREE.Mesh(new WaxTrailGeometry(this.sim.maxBeads), sideWax)
+    this.trails.frustumCulled = false
+    this.group.add(this.trails)
     this.heads = new THREE.InstancedMesh(blob, molten, 64)
     this.deposits = new THREE.InstancedMesh(blob, pooled, 32)
     this.runoffColors = this.stripes ? [new THREE.Color(stripeColor), new THREE.Color(spec.waxColor)] : undefined
-    for (const batch of [this.trails, this.heads, this.deposits]) {
+    for (const batch of [this.heads, this.deposits]) {
       batch.count = 0
       batch.frustumCulled = false
       batch.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
@@ -360,7 +364,8 @@ class WaxCandle implements Candle {
   private renderWax() {
     if (!this.sim.dirty && this.sim.drips.length === 0) return
     const r = this.spec.radius
-    const batches = [this.trails, this.heads, this.deposits]
+    this.trails.geometry.update(this.sim.beads, r, this.runoffColors ?? this.dripColors)
+    const batches = [this.heads, this.deposits]
     for (const batch of batches) batch.count = 0
     const place = (batch: THREE.InstancedMesh, color?: THREE.Color) => {
       const i = batch.count
@@ -370,7 +375,7 @@ class WaxCandle implements Candle {
       if (color) batch.setColorAt(i, color)
       batch.count++
     }
-    const onSide = (theta: number, y: number, fromTheta: number, fromY: number, size: number, color: number, hot = false) => {
+    const onSide = (theta: number, y: number, fromTheta: number, fromY: number, size: number, color: number) => {
       const angle = (theta + fromTheta) * 0.5
       const dx = (theta - fromTheta) * r
       const dy = y - fromY
@@ -384,8 +389,8 @@ class WaxCandle implements Candle {
       this.tmpQ.setFromRotationMatrix(this.tmpM.makeBasis(this.radial, this.tangent, this.cross))
       this.tmpV.copy(this.radial).multiplyScalar(r + size * 0.05)
       this.tmpV.y = (y + fromY) * 0.5
-      this.tmpS.set(size * 0.64, hot ? length * 0.65 + size * 1.13 : length * 0.5 + size * 0.12, size * (hot ? 0.83 : 0.85))
-      place(hot ? this.heads : this.trails, this.runoffColors?.[color])
+      this.tmpS.set(size * 0.64, length * 0.65 + size * 1.13, size * 0.83)
+      place(this.heads, this.runoffColors?.[color])
     }
     for (const d of this.sim.drops) {
       this.tmpV.set(d.x, d.y, d.z)
@@ -394,8 +399,7 @@ class WaxCandle implements Candle {
       if (d.landed) place(this.deposits, this.dripColors[d.color])
       else place(this.heads, this.runoffColors?.[d.color])
     }
-    for (const b of this.sim.beads) onSide(b.theta, b.y, b.fromTheta, b.fromY, b.size, b.color)
-    for (const d of this.sim.drips) onSide(d.theta, d.y, d.trailTheta, d.trailY, this.sim.size(d.mass), d.color, true)
+    for (const d of this.sim.drips) onSide(d.theta, d.y, d.trailTheta, d.trailY, this.sim.size(d.mass), d.color)
     for (const batch of batches) {
       batch.instanceMatrix.needsUpdate = true
       if (batch.instanceColor) batch.instanceColor.needsUpdate = true
