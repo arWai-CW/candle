@@ -133,7 +133,7 @@ class WaxCandle implements Candle {
   private readonly spec: WaxSpec
   private height: number
   private readonly flame: Flame
-  private readonly body: THREE.Mesh
+  private readonly body: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshStandardMaterial>
   private readonly top: WaxTop
   private readonly poolMat: THREE.MeshStandardMaterial
   private readonly wick: THREE.Mesh
@@ -142,10 +142,12 @@ class WaxCandle implements Candle {
   private readonly sim: DripSim
   private readonly trails: THREE.InstancedMesh
   private readonly heads: THREE.InstancedMesh
+  private readonly deposits: THREE.InstancedMesh
   private readonly smoke = new Smoke(300)
   private readonly glowUniforms = { uTop: { value: 0 }, uGlow: { value: 0 } }
   private readonly stripes?: THREE.CanvasTexture
   private readonly dripColors: THREE.Color[]
+  private readonly runoffColors?: THREE.Color[]
   private emberHeat = 0
   private wispTimer = 0
   private spawnAcc = 0
@@ -162,7 +164,8 @@ class WaxCandle implements Candle {
     const spec = (this.spec = SPECS[kind])
     this.height = spec.height
 
-    if (kind === 'birthday') this.stripes = stripeTexture('#ffffff', '#ff7aa8')
+    const stripeColor = '#ff7aa8'
+    if (kind === 'birthday') this.stripes = stripeTexture('#ffffff', stripeColor)
     const plateRadius = kind === 'birthday' ? 0.32 : spec.radius * 2.1
     this.group.add(plate(plateRadius))
 
@@ -198,16 +201,19 @@ class WaxCandle implements Candle {
 
     this.sim = new DripSim(spec.radius, 0, 980, plateRadius * 0.92)
     const blob = new THREE.SphereGeometry(1, 12, 8)
-    const cooled = waxMaterial('#ffffff', this.glowUniforms, undefined, 0.075)
-    cooled.roughness = 0.48
-    const molten = waxMaterial('#ffffff', this.glowUniforms, undefined, 0.14)
-    molten.roughness = 0.19
+    const sideWax = this.stripes ? waxMaterial(spec.waxColor, this.glowUniforms) : this.body.material
+    const molten = waxMaterial(spec.waxColor, this.glowUniforms)
+    molten.roughness = 0.38
     molten.transparent = true
-    molten.opacity = 0.84
+    molten.opacity = 0.92
     molten.depthWrite = false
-    this.trails = new THREE.InstancedMesh(blob, cooled, this.sim.maxBeads + 64)
+    const pooled = waxMaterial('#ffffff', this.glowUniforms, undefined, 0.075)
+    pooled.roughness = 0.48
+    this.trails = new THREE.InstancedMesh(blob, sideWax, this.sim.maxBeads)
     this.heads = new THREE.InstancedMesh(blob, molten, 64)
-    for (const batch of [this.trails, this.heads]) {
+    this.deposits = new THREE.InstancedMesh(blob, pooled, 32)
+    this.runoffColors = this.stripes ? [new THREE.Color(stripeColor), new THREE.Color(spec.waxColor)] : undefined
+    for (const batch of [this.trails, this.heads, this.deposits]) {
       batch.count = 0
       batch.frustumCulled = false
       batch.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
@@ -322,17 +328,15 @@ class WaxCandle implements Candle {
   private renderWax() {
     if (!this.sim.dirty && this.sim.drips.length === 0) return
     const r = this.spec.radius
-    let solid = 0
-    let liquid = 0
-    const place = (color: number, hot = false) => {
-      const batch = hot ? this.heads : this.trails
-      const i = hot ? liquid : solid
+    const batches = [this.trails, this.heads, this.deposits]
+    for (const batch of batches) batch.count = 0
+    const place = (batch: THREE.InstancedMesh, color?: THREE.Color) => {
+      const i = batch.count
       if (i >= batch.instanceMatrix.count) return
       this.tmpM.compose(this.tmpV, this.tmpQ, this.tmpS)
       batch.setMatrixAt(i, this.tmpM)
-      batch.setColorAt(i, this.dripColors[color])
-      if (hot) liquid++
-      else solid++
+      if (color) batch.setColorAt(i, color)
+      batch.count++
     }
     const onSide = (theta: number, y: number, fromTheta: number, fromY: number, size: number, color: number, hot = false) => {
       const angle = (theta + fromTheta) * 0.5
@@ -349,19 +353,18 @@ class WaxCandle implements Candle {
       this.tmpV.copy(this.radial).multiplyScalar(r + size * 0.05)
       this.tmpV.y = (y + fromY) * 0.5
       this.tmpS.set(size * 0.64, length * 0.65 + size * (hot ? 1.13 : 0.85), size * (hot ? 0.83 : 0.85))
-      place(color, hot)
+      place(hot ? this.heads : this.trails, this.runoffColors?.[color])
     }
     for (const d of this.sim.drops) {
       this.tmpV.set(d.x, d.y, d.z)
       this.tmpQ.setFromAxisAngle(Y_AXIS, Math.atan2(d.x, d.z))
       this.tmpS.set(d.size * (d.landed ? 2.1 : 0.8), d.size * (d.landed ? 0.25 : 1.25), d.size * (d.landed ? 1.56 : 0.8))
-      place(d.color, !d.landed)
+      if (d.landed) place(this.deposits, this.dripColors[d.color])
+      else place(this.heads, this.runoffColors?.[d.color])
     }
     for (const b of this.sim.beads) onSide(b.theta, b.y, b.fromTheta, b.fromY, b.size, b.color)
     for (const d of this.sim.drips) onSide(d.theta, d.y, d.trailTheta, d.trailY, this.sim.size(d.mass), d.color, true)
-    this.trails.count = solid
-    this.heads.count = liquid
-    for (const batch of [this.trails, this.heads]) {
+    for (const batch of batches) {
       batch.instanceMatrix.needsUpdate = true
       if (batch.instanceColor) batch.instanceColor.needsUpdate = true
     }
