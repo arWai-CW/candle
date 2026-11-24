@@ -65,30 +65,47 @@ export class BlowDetector {
 export class MicInput {
   private readonly time: Float32Array<ArrayBuffer>
   private readonly freq: Float32Array<ArrayBuffer>
+  private readonly tracks: MediaStreamTrack[]
 
   private constructor(
     private readonly ctx: AudioContext,
     private readonly analyser: AnalyserNode,
+    stream: MediaStream,
   ) {
     this.time = new Float32Array(analyser.fftSize)
     this.freq = new Float32Array(analyser.frequencyBinCount)
+    this.tracks = stream.getAudioTracks()
   }
 
   static async start(ctx: AudioContext): Promise<MicInput> {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
     })
-    if (ctx.state !== 'running') await ctx.resume()
-    const source = ctx.createMediaStreamSource(stream)
-    const analyser = ctx.createAnalyser()
-    analyser.fftSize = 1024
-    analyser.smoothingTimeConstant = 0.2
-    source.connect(analyser)
-    return new MicInput(ctx, analyser)
+    try {
+      const source = ctx.createMediaStreamSource(stream)
+      const analyser = ctx.createAnalyser()
+      analyser.fftSize = 1024
+      analyser.smoothingTimeConstant = 0.2
+      source.connect(analyser)
+      return new MicInput(ctx, analyser, stream)
+    } catch (error) {
+      stream.getTracks().forEach((track) => track.stop())
+      throw error
+    }
+  }
+
+  get available() {
+    return this.ctx.state === 'running' && this.tracks.some((track) => track.enabled && !track.muted && track.readyState === 'live')
+  }
+
+  setActive(active: boolean) {
+    this.tracks.forEach((track) => (track.enabled = active))
+    if (this.ctx.state === 'closed') return
+    if (!active) void this.ctx.suspend().catch(() => {})
+    else void this.ctx.resume().catch(() => {})
   }
 
   read(): BlowFrame {
-    if (this.ctx.state === 'suspended') void this.ctx.resume()
     this.analyser.getFloatTimeDomainData(this.time)
     let sum = 0
     for (let i = 0; i < this.time.length; i++) sum += this.time[i] * this.time[i]
