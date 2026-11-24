@@ -46,7 +46,7 @@ function waxMaterial(color: THREE.ColorRepresentation, uniforms: { uTop: { value
       .replace('#include <common>', '#include <common>\nvarying float vWorldY;\nuniform float uTop;\nuniform float uGlow;')
       .replace(
         '#include <emissivemap_fragment>',
-        '#include <emissivemap_fragment>\nfloat below = max(0.0, uTop - vWorldY);\ntotalEmissiveRadiance += vec3(1.0, 0.45, 0.15) * uGlow * exp(-below * 5.0) * 0.6;',
+        '#include <emissivemap_fragment>\nfloat below = max(0.0, uTop - vWorldY);\ntotalEmissiveRadiance += vec3(1.0, 0.27, 0.035) * uGlow * exp(-below * 3.4) * 1.1;',
       )
   }
   return mat
@@ -116,7 +116,7 @@ const SPECS: Record<'birthday' | 'white', WaxSpec> = {
     dripRate: 0.9,
     waxColor: '#ffffff',
     dripColors: ['#ff8fb8', '#ffffff'],
-    flame: { height: 0.36, width: 0.075, light: 1.6 },
+    flame: { height: 0.43, width: 0.04, light: 1.6 },
     wickLength: 0.09,
   },
   white: {
@@ -128,7 +128,7 @@ const SPECS: Record<'birthday' | 'white', WaxSpec> = {
     dripRate: 0.18,
     waxColor: '#f4eee2',
     dripColors: ['#f4eee2'],
-    flame: { height: 0.62, width: 0.13, light: 4 },
+    flame: { height: 0.74, width: 0.065, light: 4 },
     wickLength: 0.16,
   },
 }
@@ -176,6 +176,16 @@ class WaxCandle implements Candle {
 
     const bodyGeo = new THREE.CylinderGeometry(spec.radius, spec.radius, 1, 40, 1, false)
     bodyGeo.translate(0, 0.5, 0)
+    if (kind === 'white') {
+      const p = bodyGeo.attributes.position
+      for (let i = 0; i < p.count; i++) {
+        if (p.getY(i) > 0.9) {
+          const a = Math.atan2(p.getZ(i), p.getX(i))
+          p.setY(i, 1 + (Math.sin(a * 3 + 0.7) * 0.012 + Math.sin(a * 7) * 0.005) / spec.height)
+        }
+      }
+      bodyGeo.computeVertexNormals()
+    }
     this.body = new THREE.Mesh(bodyGeo, waxMaterial(spec.waxColor, this.glowUniforms, this.stripes))
     this.group.add(this.body)
 
@@ -193,7 +203,14 @@ class WaxCandle implements Candle {
     topGroup.name = 'top'
     topGroup.add(top, this.pool)
     if (kind === 'white') {
-      const rim = new THREE.Mesh(new THREE.TorusGeometry(spec.radius - 0.025, 0.027, 8, 64).rotateX(Math.PI / 2), waxMaterial(spec.waxColor, this.glowUniforms))
+      const rimGeo = new THREE.TorusGeometry(spec.radius - 0.025, 0.027, 8, 64).rotateX(Math.PI / 2)
+      const rimPoints = rimGeo.attributes.position
+      for (let i = 0; i < rimPoints.count; i++) {
+        const a = Math.atan2(rimPoints.getZ(i), rimPoints.getX(i))
+        rimPoints.setY(i, rimPoints.getY(i) + Math.sin(a * 3 + 0.7) * 0.012 + Math.sin(a * 7) * 0.005)
+      }
+      rimGeo.computeVertexNormals()
+      const rim = new THREE.Mesh(rimGeo, waxMaterial(spec.waxColor, this.glowUniforms))
       topGroup.add(rim)
       // Cooled runs give the pillar a handmade edge before fresh wax falls.
       for (let i = 0; i < 7; i++) {
@@ -220,8 +237,9 @@ class WaxCandle implements Candle {
     this.wick = new THREE.Mesh(wickGeo, new THREE.MeshStandardMaterial({ color: '#1a1410', roughness: 0.9 }))
     this.wick.rotation.z = 0.08
     this.group.add(this.wick)
-    this.emberMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.35, 0.05), transparent: true, opacity: 0, toneMapped: false })
-    this.ember = new THREE.Mesh(new THREE.SphereGeometry(wickR * 1.3, 8, 6), this.emberMat)
+    this.emberMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.8, 0.17, 0.01), transparent: true, opacity: 0, toneMapped: false })
+    this.ember = new THREE.Mesh(new THREE.SphereGeometry(wickR * 0.9, 8, 6), this.emberMat)
+    this.ember.scale.set(1, 0.5, 0.8)
     this.wick.add(this.ember)
     this.ember.position.y = spec.wickLength
 
@@ -389,7 +407,7 @@ class WaxCandle implements Candle {
 
 function plate(radius: number): THREE.Mesh {
   const pts = [new THREE.Vector2(0, -0.06), new THREE.Vector2(radius, -0.06), new THREE.Vector2(radius * 1.08, 0.04), new THREE.Vector2(radius * 1.05, 0.05), new THREE.Vector2(radius * 0.92, 0), new THREE.Vector2(0, 0)]
-  return new THREE.Mesh(new THREE.LatheGeometry(pts, 64), new THREE.MeshStandardMaterial({ color: '#3b2d24', roughness: 0.35, metalness: 0.2 }))
+  return new THREE.Mesh(new THREE.LatheGeometry(pts, 64), new THREE.MeshStandardMaterial({ color: '#77665a', roughness: 0.45, metalness: 0.1 }))
 }
 
 interface AshBit {
@@ -592,7 +610,7 @@ function burner(): THREE.Group {
     new THREE.Vector2(0.92, 0.08),
     new THREE.Vector2(0.84, 0.0),
   ]
-  const bronze = new THREE.MeshStandardMaterial({ color: '#8a6a3c', roughness: 0.38, metalness: 0.45, bumpMap: grainTexture(), bumpScale: 0.006 })
+  const bronze = new THREE.MeshStandardMaterial({ color: '#ab8659', roughness: 0.38, metalness: 0.35, bumpMap: grainTexture(), bumpScale: 0.006 })
   const bowl = new THREE.Mesh(new THREE.LatheGeometry(pts, 64), bronze)
   const lip = new THREE.Mesh(new THREE.TorusGeometry(0.92, 0.025, 8, 64).rotateX(Math.PI / 2), bronze)
   lip.position.y = 0.055

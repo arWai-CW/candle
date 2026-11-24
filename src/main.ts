@@ -23,16 +23,16 @@ renderer.setClearColor(0x080605)
 const scene = new THREE.Scene()
 scene.fog = new THREE.Fog(0x080605, 9, 22)
 const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 60)
-// A quiet studio fill keeps the materials readable without competing with the flame.
-scene.add(new THREE.HemisphereLight(0xdce5ef, 0x32241c, 0.85))
-const key = new THREE.DirectionalLight(0xffe5ca, 2.1)
-key.position.set(-3, 5, 4)
+// Low-key warm fill and a restrained cool rim leave the flame as the key light.
+scene.add(new THREE.HemisphereLight(0xa5b6c8, 0x201713, 0.3))
+const key = new THREE.DirectionalLight(0xffd1a4, 0.55)
+key.position.set(-3, 4, 3)
 scene.add(key)
-const rim = new THREE.DirectionalLight(0xb8cce5, 0.65)
+const rim = new THREE.DirectionalLight(0x8296b9, 0.4)
 rim.position.set(3, 3, -2)
 scene.add(rim)
 
-const table = new THREE.Mesh(new THREE.PlaneGeometry(60, 60).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#2a1d15', roughness: 0.7 }))
+const table = new THREE.Mesh(new THREE.PlaneGeometry(60, 60).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#15110e', roughness: 0.7 }))
 scene.add(table)
 
 // Soft contact shading grounds the objects without six shadow-map renders per flame.
