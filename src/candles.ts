@@ -10,6 +10,8 @@ export interface Env {
   gravity: THREE.Vector3
   /** Buoyancy direction: opposite of gravity plus device acceleration, m/s^2. */
   up: THREE.Vector3
+  /** Unit world-up direction in the candle's scene, without shake. */
+  airUp: THREE.Vector3
   /** Wind strength 0..1. */
   wind: number
   /** Device acceleration magnitude without gravity, m/s^2. */
@@ -242,7 +244,7 @@ class WaxCandle implements Candle {
     const spec = this.spec
     const g = env.gravity
     const tilt = Math.hypot(g.x, g.z)
-    this.flame.update(dt, { up: env.up, wind: env.wind, time: env.time })
+    this.flame.update(dt, env)
 
     const burning = this.flame.level > 0.5
     if (burning) {
@@ -288,14 +290,14 @@ class WaxCandle implements Candle {
     // Wick ember and the smoke wisp after it goes out.
     this.emberHeat = Math.max(0, this.emberHeat - dt * 0.5)
     this.emberMat.opacity = Math.max(this.emberHeat, this.flame.level * 0.6)
+    const at = this.tmpV.set(this.flame.group.position.x, this.height + spec.wickLength * 0.9, 0)
+    const up = this.tmpS.copy(env.up).normalize()
+    this.smoke.update(dt, at, up, env.airUp, env.wind, env.time)
     if (this.wispTimer > 0) {
       this.wispTimer -= dt
-      const at = this.tmpV.set(this.flame.group.position.x, this.height + spec.wickLength * 0.9, 0)
-      const up = this.tmpS.copy(env.up).normalize()
       const n = Math.random() < this.wispTimer ? 2 : 1
       for (let i = 0; i < n; i++) this.smoke.emit(at, up, { speed: 0.35, size: spec.radius * 0.6 + 0.05, life: 2.6, alpha: 0.32 * Math.min(1, this.wispTimer) })
     }
-    this.smoke.update(dt, this.tmpS.copy(env.up).normalize(), env.wind, env.time)
 
     this.renderBeads()
   }
@@ -374,6 +376,7 @@ class Incense implements Candle {
   private emitAcc = 0
   private readonly base = -0.25
   private readonly tmp = new THREE.Vector3()
+  private readonly smokeSource = new THREE.Vector3()
 
   constructor() {
     this.group.add(burner())
@@ -475,15 +478,15 @@ class Incense implements Candle {
     this.glow.material.opacity = Math.min(1, this.heat)
     this.emberLight.intensity = 2.5 * this.heat * flick
 
+    const at = this.smokeSource.set(0, this.top + this.ash + 0.01, 0)
+    this.smoke.update(dt, at, up, env.airUp, env.wind, env.time)
     if (this.heat > 0.15) {
       this.emitAcc += dt * 45 * Math.min(1, this.heat)
-      const at = new THREE.Vector3(0, this.top + this.ash + 0.01, 0)
       while (this.emitAcc >= 1) {
         this.emitAcc -= 1
         this.smoke.emit(at, up, { speed: 0.5, size: 0.035, life: 4.5, alpha: 0.22 * Math.min(1, this.heat) })
       }
     }
-    this.smoke.update(dt, up, env.wind, env.time)
     this.updateAsh(dt, env)
     this.layout()
   }
