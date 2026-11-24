@@ -58,7 +58,8 @@ export class BlowDetector {
     const minLevel = Math.max(-58, -34 - (s < 1 ? 12 : 18) * (s - 1))
     const minRatio = Math.max(0.15, 0.28 - 0.05 * (s - 1))
     const minExcess = 14 / s
-    const blowLike = frame.lowRatio > minRatio && frame.flatness > 0.19 && frame.level > minLevel && excess > minExcess
+    const overGate = frame.level > minLevel && excess > minExcess
+    const blowLike = frame.lowRatio > minRatio && frame.flatness > 0.19 && overGate
     const raw = blowLike && this.armed ? clamp01(((excess - 10 / s) / 30) * s) : 0
 
     const tau = raw > this.strength ? 0.04 : 0.25
@@ -77,19 +78,22 @@ export class BlowDetector {
     if (this.armed && (blowLike || this.candidateAge > 0)) {
       this.candidateAge += dt
       this.peak = Math.max(this.peak, this.envelope)
-      this.sustained = blowLike ? this.sustained + dt : Math.max(0, this.sustained - dt * 2)
+      this.sustained = blowLike ? Math.min(this.holdSeconds, this.sustained + dt) : Math.max(0, this.sustained - dt * 2)
       if (this.sustained >= this.holdSeconds) this.qualificationLevel ??= this.envelope
       const qualifiedAt = this.qualificationLevel
 
       if (this.candidateAge >= 3.2) {
         this.learnFloor(this.envelope, dt, 0.15)
         if (this.envelope - this.floor <= 2) this.resetCandidate()
-      } else if (qualifiedAt !== undefined && Math.max(this.peak - this.envelope, this.envelope - qualifiedAt) >= 6) {
+      } else if (qualifiedAt !== undefined && (
+        (blowLike && this.envelope - qualifiedAt >= 6) ||
+        ((blowLike || !overGate) && this.peak - this.envelope >= 6)
+      )) {
         blown = true
         this.resetCandidate()
         this.released = 0
         this.armed = false
-      } else if (qualifiedAt === undefined && this.sustained === 0) {
+      } else if (this.sustained === 0) {
         this.resetCandidate()
       }
     }

@@ -156,6 +156,14 @@ describe('BlowDetector', () => {
     }
     expect(blown).toBe(true)
   })
+
+  it('does not confirm a gust from a broadband startup followed by a louder tonal hum', () => {
+    const d = new BlowDetector(1.6)
+    run(d, room, 0.5)
+    expect(run(d, { ...gust, level: -30 }, 0.3)).toBe(false)
+    expect(run(d, { ...gust, level: -19, flatness: 0.03 }, 0.3)).toBe(false)
+    expect(run(d, room, 0.25)).toBe(false)
+  })
 })
 
 describe('MicInput', () => {
