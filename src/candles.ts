@@ -147,7 +147,7 @@ class WaxCandle implements Candle {
 
     if (kind === 'birthday') {
       this.stripes = stripeTexture('#ffffff', '#ff7aa8')
-      this.group.add(cake())
+      this.group.add(plate(0.32))
     } else {
       this.group.add(plate(spec.radius * 2.1))
     }
@@ -197,7 +197,7 @@ class WaxCandle implements Candle {
     const h = spec.height + spec.flame.height + 0.4
     this.focus =
       kind === 'birthday'
-        ? { centre: new THREE.Vector3(0, 0.55, 0), halfWidth: 1.1, halfHeight: 1.25 }
+        ? { centre: new THREE.Vector3(0, 0.78, 0), halfWidth: 0.6, halfHeight: 1.05 }
         : { centre: new THREE.Vector3(0, h * 0.5 - 0.1, 0), halfWidth: 1.25, halfHeight: h * 0.5 + 0.35 }
     this.layout()
   }
@@ -332,25 +332,6 @@ class WaxCandle implements Candle {
       if (o instanceof THREE.Mesh || o instanceof THREE.Points) o.geometry.dispose()
     })
   }
-}
-
-function cake(): THREE.Group {
-  const g = new THREE.Group()
-  const sponge = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 0.9, 64), new THREE.MeshStandardMaterial({ color: '#f6d7e0', roughness: 0.8 }))
-  sponge.position.y = -0.45
-  const icing = new THREE.Mesh(new THREE.CylinderGeometry(1.53, 1.53, 0.08, 64), new THREE.MeshStandardMaterial({ color: '#fffaf5', roughness: 0.45 }))
-  icing.position.y = -0.03
-  g.add(sponge, icing)
-  for (let i = 0; i < 18; i++) {
-    const a = (i / 18) * Math.PI * 2
-    const blob = new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 8), icing.material)
-    blob.position.set(Math.cos(a) * 1.4, 0.02, Math.sin(a) * 1.4)
-    g.add(blob)
-  }
-  const plateMesh = new THREE.Mesh(new THREE.CylinderGeometry(1.9, 1.8, 0.05, 64), new THREE.MeshStandardMaterial({ color: '#d9d6d0', roughness: 0.3 }))
-  plateMesh.position.y = -0.92
-  g.add(plateMesh)
-  return g
 }
 
 function plate(radius: number): THREE.Mesh {

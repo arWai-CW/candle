@@ -7,10 +7,9 @@ import { deviceToScreen, gravityFromOrientation, normalize, type Vec3 } from './
 type CandleWithView = Candle & { setViewportHeight(px: number): void }
 
 const canvas = document.querySelector<HTMLCanvasElement>('#scene')!
-const startBtn = document.querySelector<HTMLButtonElement>('#start')!
 const intro = document.querySelector<HTMLElement>('#intro')!
 const hud = document.querySelector<HTMLElement>('#hud')!
-const relightBtn = document.querySelector<HTMLButtonElement>('#relight')!
+const sensInput = document.querySelector<HTMLInputElement>('#sens')!
 const hint = document.querySelector<HTMLElement>('#hint')!
 const meter = document.querySelector<HTMLElement>('#meter > div')!
 const kindButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-kind]')]
@@ -83,10 +82,10 @@ async function requestMotion(): Promise<void> {
 }
 
 // Drag to tilt when there is no motion sensor (desktop), hold to blow when there is no mic.
-let pointerDown: { x: number; y: number; moved: boolean; beta: number; gamma: number } | null = null
+let pointerDown: { x: number; y: number; moved: boolean; beta: number; gamma: number; wasLit: boolean } | null = null
 let manualBlow = false
 canvas.addEventListener('pointerdown', (e) => {
-  pointerDown = { x: e.clientX, y: e.clientY, moved: false, beta: dragTilt.beta, gamma: dragTilt.gamma }
+  pointerDown = { x: e.clientX, y: e.clientY, moved: false, beta: dragTilt.beta, gamma: dragTilt.gamma, wasLit: candle.lit }
   canvas.setPointerCapture(e.pointerId)
 })
 canvas.addEventListener('pointermove', (e) => {
@@ -104,7 +103,10 @@ canvas.addEventListener('pointermove', (e) => {
 const endPointer = () => {
   pointerDown = null
 }
-canvas.addEventListener('pointerup', endPointer)
+canvas.addEventListener('pointerup', () => {
+  if (started && pointerDown && !pointerDown.moved && !pointerDown.wasLit && !candle.lit) relight()
+  endPointer()
+})
 canvas.addEventListener('pointercancel', endPointer)
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') manualBlow = true
@@ -115,7 +117,13 @@ window.addEventListener('keyup', (e) => {
 
 // --- mic -----------------------------------------------------------------
 let mic: MicInput | null = null
-const detector = new BlowDetector()
+const SENS_KEY = 'candle.sensitivity'
+const detector = new BlowDetector(Number(localStorage.getItem(SENS_KEY)) || 1.6)
+sensInput.value = String(detector.sensitivity)
+sensInput.addEventListener('input', () => {
+  detector.sensitivity = Number(sensInput.value)
+  localStorage.setItem(SENS_KEY, sensInput.value)
+})
 
 async function startMic(ctx: AudioContext) {
   try {
@@ -149,15 +157,15 @@ function setKind(kind: CandleKind) {
 
 for (const b of kindButtons) b.addEventListener('click', () => setKind(b.dataset.kind as CandleKind))
 
-relightBtn.addEventListener('click', () => {
+function relight() {
   if (candle.burnedOut) candle.reset()
   candle.light()
-  showHint(candle.kind === 'incense' ? '吹熄支香' : '吹熄佢', 1800)
-})
+}
 
 let started = false
 let wakeLock: { release(): Promise<void> } | null = null
-startBtn.addEventListener('click', async () => {
+intro.addEventListener('click', async () => {
+  if (started) return
   // iOS needs both permission prompts and the AudioContext created inside the tap.
   const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
   const ctx = new AC()
@@ -175,7 +183,6 @@ startBtn.addEventListener('click', async () => {
   } catch {
     wakeLock = null
   }
-  if (mic) showHint('對住咪吹一啖氣', 3000)
 })
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && started && wakeLock) {
@@ -196,7 +203,7 @@ function resize() {
   camera.position.set(f.centre.x, f.centre.y + dist * 0.22, f.centre.z + dist)
   camera.lookAt(f.centre)
   camera.updateProjectionMatrix()
-  table.position.y = candle.kind === 'birthday' ? -0.95 : candle.kind === 'incense' ? -0.55 : -0.06
+  table.position.y = candle.kind === 'incense' ? -0.55 : -0.06
   candle.setViewportHeight(h * renderer.getPixelRatio())
 }
 window.addEventListener('resize', resize)
@@ -239,8 +246,7 @@ function frame() {
 
   if (candle.lit !== lastLit) {
     lastLit = candle.lit
-    relightBtn.classList.toggle('hidden', candle.lit)
-    if (!candle.lit && candle.burnedOut) showHint(candle.kind === 'incense' ? '燒完喇' : '燒到盡喇', 2500)
+    if (!candle.lit) showHint(candle.burnedOut ? (candle.kind === 'incense' ? '燒完喇' : '燒到盡喇') : '點擊畫面點火', 2500)
   }
 
   renderer.render(scene, camera)
