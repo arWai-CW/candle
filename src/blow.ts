@@ -30,10 +30,12 @@ export class BlowDetector {
   ) {}
 
   update(frame: BlowFrame, dt: number): BlowState {
+    const s = Math.max(0.25, this.sensitivity)
     const excess = frame.level - this.floor
-    const minLevel = -34 - 8 * (this.sensitivity - 1)
-    const blowLike = frame.lowRatio > 0.3 && frame.level > minLevel && excess > 14
-    const raw = blowLike ? clamp01((excess - 10) / 22) * this.sensitivity : 0
+    const minLevel = -34 - 12 * (s - 1)
+    const minRatio = Math.max(0.15, 0.3 - 0.05 * (s - 1))
+    const blowLike = frame.lowRatio > minRatio && frame.level > minLevel && excess > 14 / s
+    const raw = blowLike ? clamp01(((excess - 10 / s) / 22) * s) : 0
 
     const tau = raw > this.strength ? 0.04 : 0.25
     this.strength += (clamp01(raw) - this.strength) * Math.min(1, dt / tau)

@@ -15,15 +15,11 @@
   </head>
   <body>
     <canvas id="scene"></canvas>
-    <div id="intro">
-      <h1>蠟燭</h1>
-      <p>對住咪吹氣就會熄<br />打側部手機，火光會一直向上燒</p>
-      <button id="start" class="primary">點火</button>
-    </div>
+    <div id="intro"><span>點擊畫面點火</span></div>
     <div id="meter"><div></div></div>
     <div id="hint"></div>
     <div id="hud" class="hidden">
-      <button id="relight" class="primary hidden">再點火</button>
+      <label class="sens">靈敏度<input id="sens" type="range" min="0.5" max="3" step="0.1" /></label>
       <div class="kinds">
         <button data-kind="birthday" class="active">生日蠟燭</button>
         <button data-kind="white">白蠟燭</button>

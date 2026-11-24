@@ -39,4 +39,20 @@ describe('BlowDetector', () => {
     expect(d.strength).toBeGreaterThan(0.1)
     expect(d.strength).toBeLessThan(0.75)
   })
+
+  it('catches a softer blow when sensitivity is raised', () => {
+    const soft = { level: -38, lowRatio: 0.6 }
+    const normal = new BlowDetector(1)
+    run(normal, { level: -58, lowRatio: 0.5 }, 3)
+    expect(run(normal, soft, 0.6)).toBe(false)
+    const keen = new BlowDetector(2)
+    run(keen, { level: -58, lowRatio: 0.5 }, 3)
+    expect(run(keen, soft, 0.6)).toBe(true)
+  })
+
+  it('needs a harder blow when sensitivity is lowered', () => {
+    const d = new BlowDetector(0.5)
+    run(d, { level: -55, lowRatio: 0.5 }, 3)
+    expect(run(d, { level: -30, lowRatio: 0.7 }, 0.6)).toBe(false)
+  })
 })
