@@ -43,6 +43,8 @@ export class Smoke {
   private readonly alphas: Float32Array
   private readonly geometry = new THREE.BufferGeometry()
   private readonly material: THREE.ShaderMaterial
+  private readonly lastUp = new THREE.Vector3(0, 1, 0)
+  private readonly turn = new THREE.Quaternion()
 
   constructor(
     private readonly max = 400,
@@ -83,7 +85,9 @@ export class Smoke {
     })
   }
 
-  update(dt: number, up: THREE.Vector3, wind: number, time: number) {
+  update(dt: number, source: THREE.Vector3, up: THREE.Vector3, airUp: THREE.Vector3, wind: number, time: number) {
+    this.turn.setFromUnitVectors(this.lastUp, airUp)
+    this.lastUp.copy(airUp)
     let n = 0
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i]
@@ -94,6 +98,8 @@ export class Smoke {
       }
       const f = p.age / p.life
       const swirl = 0.08 + f * 0.5
+      p.pos.sub(source).applyQuaternion(this.turn).add(source)
+      p.vel.applyQuaternion(this.turn)
       p.vel.addScaledVector(up, dt * 0.25)
       p.vel.x += Math.sin(time * 1.7 + p.seed + p.pos.y * 3) * swirl * dt
       p.vel.z += Math.cos(time * 1.3 + p.seed * 1.3 + p.pos.y * 2.5) * swirl * dt - wind * dt * 2

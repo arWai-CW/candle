@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import './style.css'
 import { BlowDetector, MicInput } from './blow'
 import { createCandle, type Candle, type CandleKind } from './candles'
-import { deviceToScreen, gravityFromOrientation, normalize, type Vec3 } from './gravity'
+import { MotionResponse, requestSensorAccess } from './motion'
 
 type CandleWithView = Candle & { setViewportHeight(px: number): void }
 
@@ -32,12 +32,8 @@ let candle: CandleWithView = createCandle('birthday')
 scene.add(candle.group)
 
 // --- sensors -------------------------------------------------------------
-const gravity = new THREE.Vector3(0, -1, 0)
-const accel = new THREE.Vector3()
-let orientation: { beta: number; gamma: number } | null = null
-let accelSign = 1
-let accelSignVotes = 0
-let dragTilt = { beta: 90, gamma: 0 }
+const motion = new MotionResponse()
+let dragTilt = { pitch: 0, roll: 0 }
 
 function screenAngle(): number {
   const a = screen.orientation?.angle
@@ -47,45 +43,18 @@ function screenAngle(): number {
 }
 
 window.addEventListener('deviceorientation', (e) => {
-  if (e.beta == null || e.gamma == null) return
-  orientation = { beta: e.beta, gamma: e.gamma }
+  motion.orient(e.beta, e.gamma)
 })
 
 window.addEventListener('devicemotion', (e) => {
-  const a = e.acceleration
-  const ag = e.accelerationIncludingGravity
-  const angle = screenAngle()
-  if (a && a.x != null && a.y != null && a.z != null) {
-    const v = deviceToScreen({ x: a.x, y: a.y, z: a.z }, angle)
-    accel.set(v.x, v.y, v.z)
-  }
-  // Some iOS versions report motion with inverted signs; vote against the orientation-derived gravity.
-  if (orientation && ag && ag.x != null && ag.y != null && ag.z != null) {
-    const v = deviceToScreen({ x: ag.x, y: ag.y, z: ag.z }, angle)
-    const d = -(v.x * gravity.x + v.y * gravity.y + v.z * gravity.z)
-    if (Math.abs(d) > 5) {
-      accelSignVotes = Math.max(-30, Math.min(30, accelSignVotes + Math.sign(d)))
-      accelSign = accelSignVotes >= 0 ? 1 : -1
-    }
-  }
+  motion.accelerate(e.acceleration, e.accelerationIncludingGravity, performance.now())
 })
 
-async function requestMotion(): Promise<void> {
-  const DOE = DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> }
-  if (typeof DOE?.requestPermission === 'function') {
-    try {
-      await DOE.requestPermission()
-    } catch {
-      /* denied: falls back to drag-to-tilt */
-    }
-  }
-}
-
 // Drag to tilt when there is no motion sensor (desktop), hold to blow when there is no mic.
-let pointerDown: { x: number; y: number; moved: boolean; beta: number; gamma: number; wasLit: boolean } | null = null
+let pointerDown: { x: number; y: number; moved: boolean; pitch: number; roll: number; wasLit: boolean } | null = null
 let manualBlow = false
 canvas.addEventListener('pointerdown', (e) => {
-  pointerDown = { x: e.clientX, y: e.clientY, moved: false, beta: dragTilt.beta, gamma: dragTilt.gamma, wasLit: candle.lit }
+  pointerDown = { x: e.clientX, y: e.clientY, moved: false, ...dragTilt, wasLit: candle.lit }
   canvas.setPointerCapture(e.pointerId)
 })
 canvas.addEventListener('pointermove', (e) => {
@@ -93,10 +62,10 @@ canvas.addEventListener('pointermove', (e) => {
   const dx = e.clientX - pointerDown.x
   const dy = e.clientY - pointerDown.y
   if (Math.hypot(dx, dy) > 10) pointerDown.moved = true
-  if (pointerDown.moved && !orientation) {
+  if (pointerDown.moved && !motion.hasOrientation) {
     dragTilt = {
-      beta: Math.max(-10, Math.min(190, pointerDown.beta - dy * 0.4)),
-      gamma: Math.max(-89, Math.min(89, pointerDown.gamma + dx * 0.4)),
+      pitch: Math.max(-85, Math.min(85, pointerDown.pitch + dy * 0.4)),
+      roll: Math.max(-89, Math.min(89, pointerDown.roll + dx * 0.4)),
     }
   }
 })
@@ -130,7 +99,6 @@ async function startMic(ctx: AudioContext) {
     mic = await MicInput.start(ctx)
   } catch {
     mic = null
-    showHint('冇咪用，㩒住畫面吹', 4000)
   }
 }
 
@@ -166,17 +134,22 @@ let started = false
 let wakeLock: { release(): Promise<void> } | null = null
 intro.addEventListener('click', async () => {
   if (started) return
-  // iOS needs both permission prompts and the AudioContext created inside the tap.
+  type PermissionSource = { requestPermission?: () => Promise<string> }
+  const motionReady = requestSensorAccess(
+    window.DeviceOrientationEvent as (typeof DeviceOrientationEvent & PermissionSource) | undefined,
+    window.DeviceMotionEvent as (typeof DeviceMotionEvent & PermissionSource) | undefined,
+  )
   const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-  const ctx = new AC()
-  const motion = requestMotion()
-  const micReady = startMic(ctx)
-  void ctx.resume()
+  const ctx = AC ? new AC() : null
+  const micReady = ctx ? startMic(ctx) : Promise.resolve()
+  if (ctx) void ctx.resume()
   intro.classList.add('hidden')
   hud.classList.remove('hidden')
   started = true
   candle.light()
-  await Promise.all([motion, micReady])
+  const [motionAllowed] = await Promise.all([motionReady, micReady])
+  if (!motionAllowed) showHint(mic ? '拖動畫面可以打側蠟燭' : '拖動畫面可以打側蠟燭 · 冇咪用，㩒住畫面吹', 4000)
+  else if (!mic) showHint('冇咪用，㩒住畫面吹', 4000)
   try {
     const nav = navigator as unknown as { wakeLock?: { request(t: 'screen'): Promise<{ release(): Promise<void> }> } }
     wakeLock = (await nav.wakeLock?.request('screen')) ?? null
@@ -212,6 +185,7 @@ resize()
 // --- loop ----------------------------------------------------------------
 const clock = new THREE.Clock()
 const up = new THREE.Vector3()
+const airUp = new THREE.Vector3()
 let wind = 0
 let lastLit = false
 
@@ -219,14 +193,9 @@ function frame() {
   const dt = Math.min(0.05, clock.getDelta())
   const time = clock.elapsedTime
 
-  const tilt = orientation ?? dragTilt
-  const g: Vec3 = normalize(gravityFromOrientation(tilt.beta, tilt.gamma, orientation ? screenAngle() : 0))
-  gravity.lerp(new THREE.Vector3(g.x, g.y, g.z), Math.min(1, dt * 20)).normalize()
-
-  // Buoyancy: flames lean toward the direction the phone accelerates.
-  const a = accel.clone().multiplyScalar(accelSign)
-  if (a.length() > 6) a.setLength(6)
-  up.copy(gravity).multiplyScalar(-9.81).add(a)
+  motion.update(dt, performance.now(), screenAngle(), camera.quaternion, dragTilt.pitch, dragTilt.roll)
+  airUp.copy(motion.sceneGravity).negate()
+  up.copy(airUp).multiplyScalar(9.81).add(motion.acceleration)
 
   let blowStrength = 0
   if (mic) {
@@ -234,14 +203,14 @@ function frame() {
     blowStrength = state.strength
     if (state.blown && candle.lit) blowOut()
   }
-  const holdBlow = manualBlow || (!!pointerDown && !pointerDown.moved && (!mic || !orientation))
+  const holdBlow = manualBlow || (!!pointerDown && !pointerDown.moved && (!mic || !motion.hasOrientation))
   const manualTarget = holdBlow ? 1 : 0
   wind += (Math.max(blowStrength, manualTarget * 0.9) - wind) * Math.min(1, dt / (holdBlow ? 0.25 : 0.2))
   if (holdBlow) manualHeld += dt
   else manualHeld = 0
   if (manualHeld > 0.35 && candle.lit) blowOut()
 
-  candle.update(dt, { gravity, up, wind, shake: accel.length(), time })
+  candle.update(dt, { gravity: motion.gravity, up, airUp, wind, shake: motion.shake, time })
   meter.style.transform = `scaleX(${Math.min(1, wind).toFixed(3)})`
 
   if (candle.lit !== lastLit) {

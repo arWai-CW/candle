@@ -79,10 +79,12 @@ export interface FlameInput {
   up: THREE.Vector3
   /** Wind strength 0..1 blowing away from the viewer. */
   wind: number
+  /** Smoothed acceleration magnitude in m/s². */
+  shake: number
   time: number
 }
 
-/** A flickering 3D candle flame that keeps pointing along buoyancy with springy lag. */
+/** A flickering 3D candle flame that keeps pointing along buoyancy. */
 export class Flame {
   readonly group = new THREE.Group()
   readonly light: THREE.PointLight
@@ -90,7 +92,6 @@ export class Flame {
   level = 0
   target = 0
   readonly dir = new THREE.Vector3(0, 1, 0)
-  private readonly vel = new THREE.Vector3()
   private readonly pivot = new THREE.Group()
   private readonly outer: THREE.ShaderMaterial
   private readonly inner: THREE.ShaderMaterial
@@ -175,22 +176,16 @@ export class Flame {
     const rate = this.target > this.level ? 2.2 : 9
     this.level += Math.sign(this.target - this.level) * Math.min(Math.abs(this.target - this.level), rate * dt)
 
-    // Spring the flame axis toward buoyancy plus the wind pushing it away from the viewer.
     const wind = input.wind
-    this.tmp.copy(input.up).normalize()
-    this.tmp.z -= wind * 1.6
-    this.tmp.y += wind * 0.3
-    this.tmp.normalize()
-    const k = 70
-    const damping = 9
-    this.vel.addScaledVector(this.tmp.sub(this.dir), k * dt)
-    this.vel.multiplyScalar(Math.max(0, 1 - damping * dt))
-    this.dir.addScaledVector(this.vel, dt).normalize()
+    this.dir.copy(input.up).normalize()
+    this.dir.z -= wind * 1.6
+    this.dir.y += wind * 0.3
+    this.dir.normalize()
     this.q.setFromUnitVectors(this.yAxis, this.dir)
     this.pivot.quaternion.copy(this.q)
 
     const t = input.time
-    const flicker = 0.5 + wind * 2.5
+    const flicker = 0.5 + wind * 2.5 + Math.min(1, input.shake / 10) * 1.4
     const lvl = this.level
     const stretch = 1 + wind * 0.5
     const squeeze = 1 / Math.sqrt(stretch)
