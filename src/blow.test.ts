@@ -72,6 +72,16 @@ describe('BlowDetector', () => {
     expect(pulse(d, { ...gust, level: -39 }, 0.35)).toBe(true)
   })
 
+  it('extinguishes when a qualifying soft gust tapers slowly below the gate', () => {
+    const d = new BlowDetector(1.6)
+    run(d, room, 0.5)
+    let blown = run(d, { ...gust, level: -44 }, 0.35)
+    for (let frame = 1; frame <= 60; frame++) {
+      blown = d.update({ ...gust, flatness: 0.45, level: -44 - frame * 0.2 }, 1 / 60).blown || blown
+    }
+    expect(blown).toBe(true)
+  })
+
   it('ignores sustained voiced or tonal sounds', () => {
     const d = new BlowDetector()
     run(d, room, 0.5)
