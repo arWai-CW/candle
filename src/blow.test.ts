@@ -164,6 +164,16 @@ describe('BlowDetector', () => {
     expect(run(d, { ...gust, level: -19, flatness: 0.03 }, 0.3)).toBe(false)
     expect(run(d, room, 0.25)).toBe(false)
   })
+
+  it('does not relearn the floor during a short, deep dip in loud room noise', () => {
+    const d = new BlowDetector(1.6)
+    const ambient = { ...gust, level: -30 }
+    run(d, ambient, 2)
+    const dip = { ...room, level: -68 }
+    expect(run(d, dip, 0.75)).toBe(false)
+    expect(run(d, ambient, 0.5)).toBe(false)
+    expect(run(d, dip, 0.25)).toBe(false)
+  })
 })
 
 describe('MicInput', () => {

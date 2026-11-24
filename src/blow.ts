@@ -71,7 +71,7 @@ export class BlowDetector {
     }
 
     if (!blowLike && this.armed && this.candidateAge === 0) {
-      this.learnFloor(frame.level, dt, 2.5)
+      this.learnFloor(frame.level, dt, excess < 0 ? 6 : 2.5)
     }
 
     let blown = false
