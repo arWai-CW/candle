@@ -9,6 +9,13 @@ function run(d: BlowDetector, frame: Omit<BlowFrame, 'flatness'> & { flatness?: 
 
 const room = { level: -56, lowRatio: 0.5 }
 const gust = { level: -24, lowRatio: 0.6 }
+type TestFrame = Parameters<typeof run>[1]
+
+function pulse(d: BlowDetector, frame: TestFrame, seconds: number, ambient = room) {
+  const during = run(d, frame, seconds)
+  const after = run(d, ambient, 0.25)
+  return during || after
+}
 
 describe('BlowDetector', () => {
   it('learns a quiet room and stays calm', () => {
@@ -20,13 +27,13 @@ describe('BlowDetector', () => {
   it('blows out on a sustained loud low-frequency gust', () => {
     const d = new BlowDetector()
     run(d, { level: -55, lowRatio: 0.5 }, 3)
-    expect(run(d, { level: -12, lowRatio: 0.8 }, 0.4)).toBe(true)
+    expect(pulse(d, { level: -12, lowRatio: 0.8 }, 0.4)).toBe(true)
   })
 
   it('ignores a short tap', () => {
     const d = new BlowDetector()
     run(d, { level: -55, lowRatio: 0.5 }, 3)
-    expect(run(d, { level: -12, lowRatio: 0.8 }, 0.08)).toBe(false)
+    expect(pulse(d, { level: -12, lowRatio: 0.8 }, 0.08)).toBe(false)
   })
 
   it('ignores loud high-pitched sound', () => {
@@ -47,22 +54,22 @@ describe('BlowDetector', () => {
     const soft = { level: -38, lowRatio: 0.6 }
     const normal = new BlowDetector(1)
     run(normal, { level: -58, lowRatio: 0.5 }, 3)
-    expect(run(normal, soft, 0.6)).toBe(false)
+    expect(pulse(normal, soft, 0.6)).toBe(false)
     const keen = new BlowDetector(2)
     run(keen, { level: -58, lowRatio: 0.5 }, 3)
-    expect(run(keen, soft, 0.6)).toBe(true)
+    expect(pulse(keen, soft, 0.6)).toBe(true)
   })
 
   it('needs a harder blow when sensitivity is lowered', () => {
     const d = new BlowDetector(0.5)
     run(d, { level: -55, lowRatio: 0.5 }, 3)
-    expect(run(d, { level: -30, lowRatio: 0.7 }, 0.6)).toBe(false)
+    expect(pulse(d, { level: -30, lowRatio: 0.7 }, 0.6)).toBe(false)
   })
 
   it('extinguishes with a soft gust clearly above the room noise', () => {
     const d = new BlowDetector(1.6)
     run(d, room, 0.5)
-    expect(run(d, { ...gust, level: -39 }, 0.35)).toBe(true)
+    expect(pulse(d, { ...gust, level: -39 }, 0.35)).toBe(true)
   })
 
   it('ignores sustained voiced or tonal sounds', () => {
@@ -74,7 +81,7 @@ describe('BlowDetector', () => {
   it('learns existing broadband noise before arming', () => {
     const d = new BlowDetector(1.6)
     expect(run(d, { ...gust, level: -32 }, 3)).toBe(false)
-    expect(run(d, { ...gust, level: -20 }, 0.35)).toBe(true)
+    expect(pulse(d, { ...gust, level: -20 }, 0.35, { ...gust, level: -32 })).toBe(true)
   })
 
   it('waits to learn room noise if the mic initially reports digital silence', () => {
@@ -89,16 +96,25 @@ describe('BlowDetector', () => {
     const d = new BlowDetector(1.6)
     run(d, { level: -120, lowRatio: 0, flatness: 0 }, 3.1)
     expect(d.ready).toBe(true)
-    expect(run(d, { ...gust, level: -39 }, 0.35)).toBe(true)
+    expect(pulse(d, { ...gust, level: -39 }, 0.35)).toBe(true)
   })
 
   it('does not extinguish again until the current gust ends', () => {
     const d = new BlowDetector()
     run(d, room, 0.5)
-    expect(run(d, gust, 0.35)).toBe(true)
+    expect(run(d, { ...gust, level: -15 }, 0.35)).toBe(false)
+    expect(run(d, gust, 0.25)).toBe(true)
     expect(run(d, gust, 1.5)).toBe(false)
     expect(run(d, room, 0.35)).toBe(false)
-    expect(run(d, gust, 0.35)).toBe(true)
+    expect(pulse(d, gust, 0.35)).toBe(true)
+  })
+
+  it('learns a stationary broadband sound that starts after calibration without blowing out', () => {
+    const d = new BlowDetector(1.6)
+    run(d, room, 0.5)
+    expect(run(d, { ...gust, level: -30 }, 4)).toBe(false)
+    expect(d.floor).toBeGreaterThan(-35)
+    expect(run(d, room, 0.5)).toBe(false)
   })
 })
 

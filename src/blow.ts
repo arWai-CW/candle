@@ -25,6 +25,10 @@ export class BlowDetector {
   strength = 0
   private calibration = 0.3
   private calibrationTimeout = 3
+  private envelope = -60
+  private peak = -Infinity
+  private candidateAge = 0
+  private qualified = false
   private sustained = 0
   private released = 0
   private armed = true
@@ -39,6 +43,7 @@ export class BlowDetector {
   }
 
   update(frame: BlowFrame, dt: number): BlowState {
+    this.envelope += (frame.level - this.envelope) * (1 - Math.exp(-dt / 0.045))
     if (!this.ready) {
       this.calibrationTimeout -= dt
       if (frame.level > -110) {
@@ -66,16 +71,33 @@ export class BlowDetector {
 
     if (!blowLike || !this.armed) this.learnFloor(frame.level, dt, excess < minExcess ? 1.5 : 6)
 
-    if (blowLike && this.armed) this.sustained += dt
-    else this.sustained = Math.max(0, this.sustained - dt * 2)
     let blown = false
-    if (this.sustained >= this.holdSeconds) {
-      blown = true
-      this.sustained = 0
-      this.released = 0
-      this.armed = false
+    if (this.armed && (blowLike || this.candidateAge > 0)) {
+      this.candidateAge += dt
+      this.peak = Math.max(this.peak, this.envelope)
+      this.sustained = blowLike ? this.sustained + dt : Math.max(0, this.sustained - dt * 2)
+      this.qualified ||= this.sustained >= this.holdSeconds
+
+      if (this.candidateAge >= 3.2) {
+        this.learnFloor(this.envelope, dt, 0.15)
+        if (this.envelope - this.floor <= 2) this.resetCandidate()
+      } else if (this.peak - this.envelope >= 6 || (!this.qualified && this.sustained === 0)) {
+        blown = this.qualified
+        this.resetCandidate()
+        if (blown) {
+          this.released = 0
+          this.armed = false
+        }
+      }
     }
     return { strength: this.strength, blown }
+  }
+
+  private resetCandidate() {
+    this.peak = -Infinity
+    this.candidateAge = 0
+    this.qualified = false
+    this.sustained = 0
   }
 
   private learnFloor(level: number, dt: number, tau: number) {
