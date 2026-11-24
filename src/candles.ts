@@ -158,12 +158,9 @@ class WaxCandle implements Candle {
     const spec = (this.spec = SPECS[kind])
     this.height = spec.height
 
-    if (kind === 'birthday') {
-      this.stripes = stripeTexture('#ffffff', '#ff7aa8')
-      this.group.add(plate(0.32))
-    } else {
-      this.group.add(plate(spec.radius * 2.1))
-    }
+    if (kind === 'birthday') this.stripes = stripeTexture('#ffffff', '#ff7aa8')
+    const plateRadius = kind === 'birthday' ? 0.32 : spec.radius * 2.1
+    this.group.add(plate(plateRadius))
 
     this.dripColors = spec.dripColors.map((color) => new THREE.Color(color))
     const bodyGeo = new THREE.CylinderGeometry(spec.radius, spec.radius, 1, 40, 1, true)
@@ -195,7 +192,7 @@ class WaxCandle implements Candle {
     this.flame = new Flame(spec.flame.height, spec.flame.width, spec.flame.light)
     this.group.add(this.flame.group)
 
-    this.sim = new DripSim(spec.radius, 0, 1800, kind === 'birthday' ? 1.49 : 0.96)
+    this.sim = new DripSim(spec.radius, 0, 1800, plateRadius * 0.92)
     const beadMat = waxMaterial('#ffffff', this.glowUniforms)
     this.beads = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 10, 8), beadMat, this.sim.maxBeads)
     this.beads.count = 0
