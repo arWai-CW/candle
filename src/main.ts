@@ -54,6 +54,7 @@ window.addEventListener('devicemotion', (e) => {
 // Drag to tilt when there is no motion sensor (desktop), hold to blow when there is no mic.
 let pointerDown: { x: number; y: number; moved: boolean; pitch: number; roll: number; wasLit: boolean } | null = null
 let manualBlow = false
+canvas.addEventListener('contextmenu', (e) => e.preventDefault())
 canvas.addEventListener('pointerdown', (e) => {
   pointerDown = { x: e.clientX, y: e.clientY, moved: false, ...dragTilt, wasLit: candle.lit }
   canvas.setPointerCapture(e.pointerId)
