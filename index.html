@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-Hant-HK">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#080605" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="蠟燭" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <title>蠟燭</title>
+  </head>
+  <body>
+    <canvas id="scene"></canvas>
+    <div id="intro">
+      <h1>蠟燭</h1>
+      <p>對住咪吹氣就會熄<br />打側部手機，火光會一直向上燒</p>
+      <button id="start" class="primary">點火</button>
+    </div>
+    <div id="meter"><div></div></div>
+    <div id="hint"></div>
+    <div id="hud" class="hidden">
+      <button id="relight" class="primary hidden">再點火</button>
+      <div class="kinds">
+        <button data-kind="birthday" class="active">生日蠟燭</button>
+        <button data-kind="white">白蠟燭</button>
+        <button data-kind="incense">香</button>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
