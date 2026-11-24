@@ -381,6 +381,7 @@ class WaxCandle implements Candle {
 
   dispose() {
     this.group.traverse((o) => {
+      if (o instanceof THREE.InstancedMesh) o.dispose()
       if (o instanceof THREE.Mesh || o instanceof THREE.Points) o.geometry.dispose()
     })
   }
@@ -573,6 +574,7 @@ class Incense implements Candle {
 
   dispose() {
     this.group.traverse((o) => {
+      if (o instanceof THREE.InstancedMesh) o.dispose()
       if (o instanceof THREE.Mesh || o instanceof THREE.Points) o.geometry.dispose()
     })
   }
