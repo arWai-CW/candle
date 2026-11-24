@@ -3,6 +3,8 @@ export interface BlowFrame {
   level: number
   /** Share of spectral power below ~600 Hz, 0..1. */
   lowRatio: number
+  /** Spectral flatness from 140 to 1600 Hz, 0..1. */
+  flatness: number
 }
 
 export interface BlowState {
@@ -21,43 +23,64 @@ const clamp01 = (v: number) => Math.min(1, Math.max(0, v))
 export class BlowDetector {
   floor = -60
   strength = 0
+  private calibration = 0.3
+  private calibrationTimeout = 3
   private sustained = 0
-  private cooldown = 0
+  private released = 0
+  private armed = true
 
   constructor(
     public sensitivity = 1,
-    private readonly holdSeconds = 0.18,
+    private readonly holdSeconds = 0.22,
   ) {}
 
+  get ready() {
+    return this.calibration <= 0 || this.calibrationTimeout <= 0
+  }
+
   update(frame: BlowFrame, dt: number): BlowState {
+    if (!this.ready) {
+      this.calibrationTimeout -= dt
+      if (frame.level > -110) {
+        this.calibration -= dt
+        this.learnFloor(frame.level, dt, 0.07)
+      }
+      return { strength: 0, blown: false }
+    }
+
     const s = Math.max(0.25, this.sensitivity)
     const excess = frame.level - this.floor
-    const minLevel = -34 - 12 * (s - 1)
-    const minRatio = Math.max(0.15, 0.3 - 0.05 * (s - 1))
-    const blowLike = frame.lowRatio > minRatio && frame.level > minLevel && excess > 14 / s
-    const raw = blowLike ? clamp01(((excess - 10 / s) / 22) * s) : 0
+    const minLevel = Math.max(-58, -34 - (s < 1 ? 12 : 18) * (s - 1))
+    const minRatio = Math.max(0.15, 0.28 - 0.05 * (s - 1))
+    const minExcess = 14 / s
+    const blowLike = frame.lowRatio > minRatio && frame.flatness > 0.19 && frame.level > minLevel && excess > minExcess
+    const raw = blowLike && this.armed ? clamp01(((excess - 10 / s) / 30) * s) : 0
 
     const tau = raw > this.strength ? 0.04 : 0.25
     this.strength += (clamp01(raw) - this.strength) * Math.min(1, dt / tau)
 
-    if (!blowLike && frame.level < this.floor + 10) {
-      this.floor += (frame.level - this.floor) * Math.min(1, dt / 1.5)
-    } else if (!blowLike) {
-      this.floor += (frame.level - this.floor) * Math.min(1, dt / 6)
+    if (!this.armed) {
+      this.released = frame.level < Math.max(this.floor + 6, minLevel) ? this.released + dt : 0
+      if (this.released >= 0.15) this.armed = true
     }
-    this.floor = Math.min(-38, Math.max(-90, this.floor))
 
-    if (raw > 0.45) this.sustained += dt
+    if (!blowLike || !this.armed) this.learnFloor(frame.level, dt, excess < minExcess ? 1.5 : 6)
+
+    if (blowLike && this.armed) this.sustained += dt
     else this.sustained = Math.max(0, this.sustained - dt * 2)
-
-    this.cooldown = Math.max(0, this.cooldown - dt)
     let blown = false
-    if (this.sustained >= this.holdSeconds && this.cooldown === 0) {
+    if (this.sustained >= this.holdSeconds) {
       blown = true
       this.sustained = 0
-      this.cooldown = 0.6
+      this.released = 0
+      this.armed = false
     }
     return { strength: this.strength, blown }
+  }
+
+  private learnFloor(level: number, dt: number, tau: number) {
+    const bounded = Math.min(-18, Math.max(-90, level))
+    this.floor += (bounded - this.floor) * (1 - Math.exp(-dt / tau))
   }
 }
 
@@ -77,19 +100,26 @@ export class MicInput {
     this.tracks = stream.getAudioTracks()
   }
 
-  static async start(ctx: AudioContext): Promise<MicInput> {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-    })
+  static async start(): Promise<MicInput> {
+    const AC = window.AudioContext ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!AC || !navigator.mediaDevices?.getUserMedia) throw new DOMException('', 'NotSupportedError')
+
+    const ctx = new AC()
+    let stream: MediaStream | undefined
+    void ctx.resume().catch(() => {})
     try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      })
       const source = ctx.createMediaStreamSource(stream)
       const analyser = ctx.createAnalyser()
       analyser.fftSize = 1024
-      analyser.smoothingTimeConstant = 0.2
+      analyser.smoothingTimeConstant = 0
       source.connect(analyser)
       return new MicInput(ctx, analyser, stream)
     } catch (error) {
-      stream.getTracks().forEach((track) => track.stop())
+      stream?.getTracks().forEach((track) => track.stop())
+      void ctx.close().catch(() => {})
       throw error
     }
   }
@@ -115,11 +145,24 @@ export class MicInput {
     const binHz = this.ctx.sampleRate / this.analyser.fftSize
     let low = 0
     let total = 0
+    let bandPower = 0
+    let bandLogPower = 0
+    let bandBins = 0
     for (let i = 1; i < this.freq.length && i * binHz < 8000; i++) {
+      const hz = i * binHz
       const p = Math.pow(10, this.freq[i] / 10)
       total += p
-      if (i * binHz < 600) low += p
+      if (hz < 600) low += p
+      if (hz >= 140 && hz < 1600) {
+        bandPower += p
+        bandLogPower += Math.max(-160, this.freq[i])
+        bandBins++
+      }
     }
-    return { level, lowRatio: total > 0 ? low / total : 0 }
+    return {
+      level,
+      lowRatio: total > 0 ? low / total : 0,
+      flatness: bandPower > 1e-16 * bandBins ? Math.pow(10, bandLogPower / (10 * bandBins)) / (bandPower / bandBins) : 0,
+    }
   }
 }

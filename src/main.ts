@@ -87,6 +87,7 @@ window.addEventListener('keyup', (e) => {
 
 // --- mic -----------------------------------------------------------------
 let mic: MicInput | null = null
+const holdHint = '㩒住螢幕吹熄'
 const SENS_KEY = 'candle.sensitivity'
 const detector = new BlowDetector(Number(localStorage.getItem(SENS_KEY)) || 1.6)
 sensInput.value = String(detector.sensitivity)
@@ -96,17 +97,18 @@ sensInput.addEventListener('input', () => {
 })
 
 async function startMic() {
-  let ctx: AudioContext | undefined
+  showHint('請允許使用咪高峰', 0)
   try {
-    const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-    if (!AC || !navigator.mediaDevices?.getUserMedia) throw new Error('No microphone input')
-    ctx = new AC()
-    void ctx.resume().catch(() => {})
-    mic = await MicInput.start(ctx)
+    mic = await MicInput.start()
     mic.setActive(isForeground())
-  } catch {
-    mic = null
-    void ctx?.close().catch(() => {})
+    showHint('咪高峰準備中', 3500)
+  } catch (error) {
+    const denied = error instanceof DOMException && error.name === 'NotAllowedError'
+    const message = denied
+      ? `咪高峰未獲准；${holdHint}\n喺瀏覽器設定開咪後重新載入`
+      : `未能使用咪高峰；${holdHint}`
+    showHint(message, 6500)
+    return message
   }
 }
 
@@ -116,7 +118,7 @@ function showHint(text: string, ms = 2500) {
   hint.textContent = text
   hint.classList.add('show')
   window.clearTimeout(hintTimer)
-  hintTimer = window.setTimeout(() => hint.classList.remove('show'), ms)
+  if (ms > 0) hintTimer = window.setTimeout(() => hint.classList.remove('show'), ms)
 }
 
 function setKind(kind: CandleKind) {
@@ -136,6 +138,7 @@ for (const b of kindButtons) b.addEventListener('click', () => setKind(b.dataset
 function relight() {
   if (candle.burnedOut) candle.reset()
   candle.light()
+  showHint(mic ? (candle.kind === 'incense' ? '吹熄支香' : '吹熄佢') : holdHint, 1800)
 }
 
 let started = false
@@ -170,16 +173,15 @@ intro.addEventListener('click', async () => {
   candle.light()
   syncAnimation()
   // Start both permission requests directly from the tap.
+  const micReady = startMic()
   type PermissionSource = { requestPermission?: () => Promise<string> }
   const motionReady = requestSensorAccess(
     window.DeviceOrientationEvent as (typeof DeviceOrientationEvent & PermissionSource) | undefined,
     window.DeviceMotionEvent as (typeof DeviceMotionEvent & PermissionSource) | undefined,
   )
-  const micReady = startMic()
   void requestWakeLock()
-  const [motionAllowed] = await Promise.all([motionReady, micReady])
-  if (!motionAllowed) showHint(mic ? '拖動畫面可以打側蠟燭' : '拖動畫面可以打側蠟燭 · 冇咪用，㩒住畫面吹', 4000)
-  else if (!mic) showHint('冇咪用，㩒住畫面吹', 4000)
+  const [motionAllowed, micFailure] = await Promise.all([motionReady, micReady])
+  if (!motionAllowed) showHint(micFailure ? `拖動畫面可以打側蠟燭\n${micFailure}` : '拖動畫面可以打側蠟燭', micFailure ? 6500 : 4000)
 })
 
 function syncPageActivity() {
@@ -246,7 +248,9 @@ function frame(dt: number, time: number) {
   let blowStrength = 0
   const activeMic = mic?.available ? mic : null
   if (activeMic) {
+    const wasReady = detector.ready
     const state = detector.update(activeMic.read(), dt)
+    if (!wasReady && detector.ready) showHint('對住咪吹一啖氣', 3000)
     blowStrength = state.strength
     if (state.blown && candle.lit) blowOut()
   }
