@@ -129,6 +129,13 @@ describe('BlowDetector', () => {
     const release = run(d, quiet, 0.35)
     expect(soft || release).toBe(true)
   })
+
+  it('counts the quieter part of a gust toward its hold time', () => {
+    const d = new BlowDetector(1.6)
+    run(d, room, 0.5)
+    expect(run(d, { ...gust, level: -12 }, 0.13)).toBe(false)
+    expect(pulse(d, gust, 0.14)).toBe(true)
+  })
 })
 
 describe('MicInput', () => {

@@ -84,13 +84,13 @@ export class BlowDetector {
       if (this.candidateAge >= 3.2) {
         this.learnFloor(this.envelope, dt, 0.15)
         if (this.envelope - this.floor <= 2) this.resetCandidate()
-      } else if (this.peak - this.envelope >= 6 || (!this.qualified && this.sustained === 0)) {
-        blown = this.qualified
+      } else if (this.qualified && this.peak - this.envelope >= 6) {
+        blown = true
         this.resetCandidate()
-        if (blown) {
-          this.released = 0
-          this.armed = false
-        }
+        this.released = 0
+        this.armed = false
+      } else if (!this.qualified && this.sustained === 0) {
+        this.resetCandidate()
       }
     }
     return { strength: this.strength, blown }
