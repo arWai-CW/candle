@@ -28,7 +28,7 @@ export class BlowDetector {
   private envelope = -60
   private peak = -Infinity
   private candidateAge = 0
-  private qualified = false
+  private qualificationLevel?: number
   private sustained = 0
   private released = 0
   private armed = true
@@ -78,17 +78,18 @@ export class BlowDetector {
       this.candidateAge += dt
       this.peak = Math.max(this.peak, this.envelope)
       this.sustained = blowLike ? this.sustained + dt : Math.max(0, this.sustained - dt * 2)
-      this.qualified ||= this.sustained >= this.holdSeconds
+      if (this.sustained >= this.holdSeconds) this.qualificationLevel ??= this.envelope
+      const qualifiedAt = this.qualificationLevel
 
       if (this.candidateAge >= 3.2) {
         this.learnFloor(this.envelope, dt, 0.15)
         if (this.envelope - this.floor <= 2) this.resetCandidate()
-      } else if (this.qualified && this.peak - this.envelope >= 6) {
+      } else if (qualifiedAt !== undefined && Math.max(this.peak - this.envelope, this.envelope - qualifiedAt) >= 6) {
         blown = true
         this.resetCandidate()
         this.released = 0
         this.armed = false
-      } else if (!this.qualified && this.sustained === 0) {
+      } else if (qualifiedAt === undefined && this.sustained === 0) {
         this.resetCandidate()
       }
     }
@@ -98,7 +99,7 @@ export class BlowDetector {
   private resetCandidate() {
     this.peak = -Infinity
     this.candidateAge = 0
-    this.qualified = false
+    this.qualificationLevel = undefined
     this.sustained = 0
   }
 

@@ -145,6 +145,17 @@ describe('BlowDetector', () => {
     expect(run(d, ambient, 0.5)).toBe(false)
     expect(run(d, room, 0.25)).toBe(false)
   })
+
+  it('detects a continuing rise instead of learning it as stationary noise', () => {
+    const d = new BlowDetector(1.6)
+    run(d, room, 0.5)
+    let blown = false
+    for (let t = 0; t < 3.2; t += 1 / 60) {
+      const frame = { ...gust, flatness: 0.45, level: -42 + 6 * t }
+      blown = d.update(frame, 1 / 60).blown || blown
+    }
+    expect(blown).toBe(true)
+  })
 })
 
 describe('MicInput', () => {
