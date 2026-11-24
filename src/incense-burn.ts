@@ -27,8 +27,8 @@ export class IncenseBurn {
     }
     const lateral = Math.hypot(gravity.x, gravity.z)
     const stress = lateral + Math.min(shake / 10, 2) + Math.max(0, gravity.y) * 0.8
-    this.bend = Math.min(0.48, 2.6 * lateral * this.ash)
-    const limit = Math.max(0.035, 0.23 / (1 + 2.8 * stress))
+    this.bend = Math.min(0.7, 1.1 * Math.sqrt(lateral) * (this.ash / 0.24) ** 1.2)
+    const limit = Math.max(0.04, 0.29 / (1 + 3.5 * stress))
     if (this.ash < limit && !(this.finished && this.ash > 0.02)) return 0
     const released = this.ash
     this.ash = 0

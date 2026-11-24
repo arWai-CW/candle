@@ -30,7 +30,7 @@ export class MeltPool {
     const warm = burning ? 1 : 0
     this.heat += (warm - this.heat) * (1 - Math.exp(-dt / (burning ? 3 : 7)))
     this.carve = Math.max(this.carve, this.heat)
-    this.depth = this.radius * 0.24 * this.carve
+    this.depth = this.radius * 0.34 * this.carve
     this.width = this.radius * (0.27 + (this.maxWidth - 0.27) * this.carve)
 
     const down = Math.max(0.22, -g.y)
@@ -45,7 +45,7 @@ export class MeltPool {
         limit = at
       }
     }
-    const fill = -this.depth * (0.88 - 0.76 * this.heat)
+    const fill = -this.depth * (0.86 - 0.75 * this.heat)
     this.level = Math.min(fill, limit - this.radius * 0.004)
     const reachesLip = (fill - limit + this.radius * 0.055) / (this.radius * 0.65)
     this.overflow = this.heat * (g.y > 0 ? 1 : Math.max(0, Math.min(drain, reachesLip)))
@@ -53,7 +53,8 @@ export class MeltPool {
   }
 
   rim(angle: number) {
-    return this.radius * this.carve * (0.028 + 0.017 * Math.sin(angle * 3 + 0.7) + 0.011 * Math.cos(angle * 5 - 0.4))
+    const gutter = Math.max(0, Math.cos(angle - 1.05)) ** 12
+    return this.radius * this.carve * (0.11 - 0.085 * gutter + 0.042 * Math.sin(angle * 3 + 0.7) + 0.028 * Math.cos(angle * 7 - 0.4))
   }
 
   surfaceY(x: number, z: number) {

@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { MeltPool, RIM_ANGLES, RIM_STEPS } from './melt'
 
-const RINGS = 5
+const RINGS = 6
 const X = RIM_ANGLES.map(Math.cos)
 const Z = RIM_ANGLES.map(Math.sin)
 
@@ -68,8 +68,9 @@ export class WaxTop extends THREE.Group {
         vertex(0, w * 0.5, -d * 0.78)
         vertex(1, w, -d * 0.26)
         vertex(2, shoulder, rim)
-        vertex(3, (shoulder + r) / 2, rim * 0.8)
-        vertex(4, r, 0)
+        vertex(3, (shoulder + r) / 2, rim * 0.90)
+        vertex(4, r * 0.995, rim * 0.50)
+        vertex(5, r, -r * 0.09 * melt.carve)
       }
       this.wax.attributes.position.needsUpdate = true
       this.wax.computeVertexNormals()

@@ -7,6 +7,8 @@ export interface Drip {
   temp: number
   color: number
   travelled: number
+  trailTheta: number
+  trailY: number
 }
 
 export interface WaxBead {
@@ -14,6 +16,8 @@ export interface WaxBead {
   y: number
   size: number
   color: number
+  fromTheta: number
+  fromY: number
 }
 
 export interface WaxDrop extends Vec3 {
@@ -44,11 +48,13 @@ export class DripSim {
   ) {}
 
   spawn(theta: number, top: number, mass: number, color = 0) {
-    this.drips.push({ theta, y: top - 0.003, mass, temp: 1, color, travelled: 0 })
+    const y = top - 0.003
+    this.drips.push({ theta, y, mass, temp: 1, color, travelled: 0, trailTheta: theta, trailY: y })
+    this.dirty = true
   }
 
   size(mass: number) {
-    return Math.min(0.021, this.radius * 0.18) * (0.38 + Math.sqrt(mass))
+    return Math.min(0.035, this.radius * 0.28) * (0.38 + Math.sqrt(mass))
   }
 
   /** Returns how many drips fell off the candle this step. */
@@ -66,8 +72,7 @@ export class DripSim {
       d.y += d.vy * dt
       d.z += d.vz * dt
       if (d.y <= this.floorY && d.vy < 0 && Math.hypot(d.x, d.z) <= this.catchRadius) {
-        d.y = this.floorY + d.size * 0.12
-        d.landed = true
+        this.deposit(i)
       } else if (d.age > 2) this.drops.splice(i, 1)
       this.dirty = true
     }
@@ -83,7 +88,7 @@ export class DripSim {
         fell++
         continue
       }
-      const speed = 0.55 * d.temp * Math.sqrt(d.mass)
+      const speed = 0.92 * d.temp * Math.sqrt(d.mass)
       const oldY = d.y
       const oldTheta = d.theta
       const dy = Math.min(top - 0.003 - oldY, g.y * speed * dt)
@@ -92,24 +97,22 @@ export class DripSim {
       d.theta += dTheta
       const length = Math.hypot(dy, dTheta * r)
       d.travelled += length
-      d.temp -= dt * 0.39
+      d.temp -= dt * 0.23 / Math.sqrt(Math.max(0.15, d.mass))
 
       const size = this.size(d.mass)
-      const spacing = Math.min(0.016, size * 0.9)
+      const spacing = Math.min(0.032, size * 0.9)
       while (length > 0 && d.travelled >= spacing && d.mass > 0.08) {
         d.travelled -= spacing
         const t = Math.max(0, 1 - d.travelled / length)
-        this.addBead({ theta: oldTheta + dTheta * t, y: oldY + dy * t, size: size * 0.66, color: d.color })
-        d.mass -= spacing * 1.6
+        this.leaveTrail(d, oldTheta + dTheta * t, oldY + dy * t, size * (0.52 + d.temp * 0.20))
+        d.mass -= spacing * 0.53
       }
       const landed = d.y <= this.floorY + size * 0.2
       if (d.mass <= 0.08 || d.temp <= 0.03 || landed) {
         if (landed) {
           this.release(d, g)
-          const drop = this.drops[this.drops.length - 1]
-          drop.y = this.floorY + drop.size * 0.12
-          drop.landed = true
-        } else this.addBead({ theta: d.theta, y: d.y, size, color: d.color })
+          this.deposit(this.drops.length - 1)
+        } else this.leaveTrail(d, d.theta, d.y, size * 0.92)
         this.drips.splice(i, 1)
       }
     }
@@ -139,9 +142,38 @@ export class DripSim {
     this.dirty = true
   }
 
-  private addBead(b: WaxBead) {
-    if (this.beads.length >= this.maxBeads) this.beads.shift()
-    this.beads.push(b)
+  private leaveTrail(d: Drip, theta: number, y: number, size: number) {
+    const centreY = (y + d.trailY) * 0.5
+    const centreTheta = (theta + d.trailTheta) * 0.5
+    let existing: WaxBead | undefined
+    for (let i = this.beads.length - 1; i >= 0; i--) {
+      const b = this.beads[i]
+      if (Math.abs((b.y + b.fromY) * 0.5 - centreY) > size * 0.48) continue
+      const angle = (b.theta + b.fromTheta) * 0.5 - centreTheta
+      if (Math.abs(Math.atan2(Math.sin(angle), Math.cos(angle))) * this.radius >= size * 0.69) continue
+      existing = b
+      break
+    }
+    if (existing) existing.size = Math.max(size, existing.size)
+    else {
+      if (this.beads.length >= this.maxBeads) this.beads.shift()
+      this.beads.push({ theta, y, size, color: d.color, fromTheta: d.trailTheta, fromY: d.trailY })
+    }
+    d.trailTheta = theta
+    d.trailY = y
+    this.dirty = true
+  }
+
+  private deposit(i: number) {
+    const d = this.drops[i]
+    const near = this.drops.find((p) => p.landed && p.color === d.color && Math.hypot(p.x - d.x, p.z - d.z) < p.size * 2.8)
+    if (near) {
+      near.size = Math.min(this.radius * 0.95, Math.hypot(near.size, d.size * 0.67))
+      this.drops.splice(i, 1)
+    } else {
+      d.y = this.floorY + d.size * 0.12
+      d.landed = true
+    }
     this.dirty = true
   }
 

@@ -23,6 +23,16 @@ describe('IncenseBurn', () => {
     expect(burn.ash).toBe(0)
   })
 
+  it('holds a visible bend at gentle tilt before breaking at a steeper angle', () => {
+    const burn = new IncenseBurn(2.75, 0.52)
+    burn.step(33, true, 0, upright, 0)
+    const ash = burn.ash
+    expect(burn.step(0, true, 0, { x: 0.14, y: -0.99, z: 0 }, 0)).toBe(0)
+    expect(burn.bend).toBeGreaterThan(0.25)
+    expect(burn.ash).toBe(ash)
+    expect(burn.step(0, true, 0, { x: 0.24, y: -0.97, z: 0 }, 0)).toBe(ash)
+  })
+
   it('stops at the uncoated stub', () => {
     const burn = new IncenseBurn(0.55, 0.52)
     expect(burn.step(10, true, 0, upright, 0)).toBeGreaterThan(0)

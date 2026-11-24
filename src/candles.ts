@@ -38,11 +38,12 @@ export interface Candle {
 }
 
 /** Wax that glows warm near the flame, like light scattering through it. */
-function waxMaterial(color: THREE.ColorRepresentation, uniforms: { uTop: { value: number }; uGlow: { value: number } }, map?: THREE.Texture) {
+function waxMaterial(color: THREE.ColorRepresentation, uniforms: { uTop: { value: number }; uGlow: { value: number } }, map?: THREE.Texture, fill = 0) {
   const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0, map: map ?? null })
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uTop = uniforms.uTop
     shader.uniforms.uGlow = uniforms.uGlow
+    shader.uniforms.uWaxFill = { value: fill }
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying float vWorldY;')
       .replace(
@@ -50,10 +51,10 @@ function waxMaterial(color: THREE.ColorRepresentation, uniforms: { uTop: { value
         '#include <worldpos_vertex>\nvec4 waxPosition = vec4(transformed, 1.0);\n#ifdef USE_INSTANCING\nwaxPosition = instanceMatrix * waxPosition;\n#endif\nvWorldY = (modelMatrix * waxPosition).y;',
       )
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying float vWorldY;\nuniform float uTop;\nuniform float uGlow;')
+      .replace('#include <common>', '#include <common>\nvarying float vWorldY;\nuniform float uTop;\nuniform float uGlow;\nuniform float uWaxFill;')
       .replace(
         '#include <emissivemap_fragment>',
-        '#include <emissivemap_fragment>\nfloat below = max(0.0, uTop - vWorldY);\ntotalEmissiveRadiance += vec3(1.0, 0.45, 0.15) * uGlow * exp(-below * 5.0) * 0.6;',
+        '#include <emissivemap_fragment>\nfloat below = max(0.0, uTop - vWorldY);\ntotalEmissiveRadiance += vec3(1.0, 0.45, 0.15) * uGlow * exp(-below * 5.0) * 0.6 + diffuseColor.rgb * uWaxFill;',
       )
   }
   return mat
@@ -115,7 +116,7 @@ const SPECS: Record<'birthday' | 'white', WaxSpec> = {
     height: 2.1,
     minHeight: 0.3,
     burnRate: 1.8 / 330,
-    dripRate: 0.18,
+    dripRate: 0.29,
     tiltDripRate: 1.8,
     waxColor: '#f4eee2',
     dripColors: ['#f4eee2'],
@@ -139,7 +140,8 @@ class WaxCandle implements Candle {
   private readonly ember: THREE.Mesh
   private readonly emberMat: THREE.MeshBasicMaterial
   private readonly sim: DripSim
-  private readonly beads: THREE.InstancedMesh
+  private readonly trails: THREE.InstancedMesh
+  private readonly heads: THREE.InstancedMesh
   private readonly smoke = new Smoke(300)
   private readonly glowUniforms = { uTop: { value: 0 }, uGlow: { value: 0 } }
   private readonly stripes?: THREE.CanvasTexture
@@ -147,11 +149,13 @@ class WaxCandle implements Candle {
   private emberHeat = 0
   private wispTimer = 0
   private spawnAcc = 0
-  private uprightOutlet = 0
   private readonly tmpV = new THREE.Vector3()
   private readonly tmpM = new THREE.Matrix4()
   private readonly tmpQ = new THREE.Quaternion()
   private readonly tmpS = new THREE.Vector3()
+  private readonly tangent = new THREE.Vector3()
+  private readonly radial = new THREE.Vector3()
+  private readonly cross = new THREE.Vector3()
 
   constructor(kind: 'birthday' | 'white') {
     this.kind = kind
@@ -169,13 +173,13 @@ class WaxCandle implements Candle {
     this.group.add(this.body)
 
     this.poolMat = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(spec.waxColor).multiplyScalar(0.42),
-      roughness: 0.21,
+      color: new THREE.Color(spec.waxColor).multiplyScalar(0.21),
+      roughness: 0.25,
       metalness: 0,
       emissive: new THREE.Color(1, 0.55, 0.2),
       emissiveIntensity: 0,
     })
-    this.top = new WaxTop(spec.radius, kind === 'birthday' ? 0.91 : 0.84, waxMaterial(spec.waxColor, this.glowUniforms), this.poolMat)
+    this.top = new WaxTop(spec.radius, kind === 'birthday' ? 0.87 : 0.80, waxMaterial(spec.waxColor, this.glowUniforms), this.poolMat)
     this.group.add(this.top)
 
     const wickR = kind === 'birthday' ? 0.008 : 0.014
@@ -192,12 +196,23 @@ class WaxCandle implements Candle {
     this.flame = new Flame(spec.flame.height, spec.flame.width, spec.flame.light)
     this.group.add(this.flame.group)
 
-    this.sim = new DripSim(spec.radius, 0, 1800, plateRadius * 0.92)
-    const beadMat = waxMaterial('#ffffff', this.glowUniforms)
-    this.beads = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 10, 8), beadMat, this.sim.maxBeads)
-    this.beads.count = 0
-    this.beads.frustumCulled = false
-    this.group.add(this.beads)
+    this.sim = new DripSim(spec.radius, 0, 980, plateRadius * 0.92)
+    const blob = new THREE.SphereGeometry(1, 12, 8)
+    const cooled = waxMaterial('#ffffff', this.glowUniforms, undefined, 0.075)
+    cooled.roughness = 0.48
+    const molten = waxMaterial('#ffffff', this.glowUniforms, undefined, 0.14)
+    molten.roughness = 0.19
+    molten.transparent = true
+    molten.opacity = 0.84
+    molten.depthWrite = false
+    this.trails = new THREE.InstancedMesh(blob, cooled, this.sim.maxBeads + 64)
+    this.heads = new THREE.InstancedMesh(blob, molten, 64)
+    for (const batch of [this.trails, this.heads]) {
+      batch.count = 0
+      batch.frustumCulled = false
+      batch.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+      this.group.add(batch)
+    }
     this.group.add(this.smoke.points)
 
     const h = spec.height + spec.flame.height + 0.4
@@ -231,7 +246,6 @@ class WaxCandle implements Candle {
     this.top.melt.reset()
     this.top.update(0, false, new THREE.Vector3(0, -1, 0))
     this.spawnAcc = 0
-    this.uprightOutlet = 0
     this.sim.clear()
     this.smoke.clear()
     this.flame.target = 0
@@ -240,7 +254,7 @@ class WaxCandle implements Candle {
   }
 
   private layout() {
-    this.body.scale.y = this.height
+    this.body.scale.y = this.height - this.spec.radius * 0.09 * this.top.melt.carve
     this.top.position.y = this.height
     const recess = this.top.melt.depth * 0.78
     this.wick.position.y = this.height - 0.02 - recess
@@ -270,12 +284,10 @@ class WaxCandle implements Candle {
       this.spawnAcc += rate * dt
       while (this.spawnAcc >= 1) {
         this.spawnAcc -= 1
-        if (!this.uprightOutlet || Math.random() < 0.19) this.uprightOutlet = Math.random() * Math.PI * 2
-        const outlet = melt.overflow > 0.05 ? melt.outlet : this.uprightOutlet
-        const theta = outlet + (Math.random() - 0.5) * 0.18
+        const theta = melt.outlet + (Math.random() - 0.5) * (this.kind === 'birthday' ? 0.23 : 0.12)
         const stripe = (Math.PI / 2 - theta) / (2 * Math.PI) - this.height / 0.32
         const color = this.stripes && stripe - Math.floor(stripe) >= 26 / 64 ? 1 : 0
-        this.sim.spawn(theta, this.height, 0.45 + Math.random() * 0.45, color)
+        this.sim.spawn(theta, this.height, 0.67 + Math.random() * 0.62, color)
       }
     }
     this.sim.step(dt, g, this.height)
@@ -300,42 +312,59 @@ class WaxCandle implements Candle {
       for (let i = 0; i < n; i++) this.smoke.emit(at, up, { speed: 0.35, size: spec.radius * 0.6 + 0.05, life: 2.6, alpha: 0.32 * Math.min(1, this.wispTimer) })
     }
 
-    this.renderBeads()
+    this.renderWax()
   }
 
   setViewportHeight(px: number) {
     this.smoke.setViewportHeight(px)
   }
 
-  private renderBeads() {
+  private renderWax() {
     if (!this.sim.dirty && this.sim.drips.length === 0) return
     const r = this.spec.radius
-    let i = 0
-    const place = (color: number) => {
-      if (i >= this.sim.maxBeads) return
+    let solid = 0
+    let liquid = 0
+    const place = (color: number, hot = false) => {
+      const batch = hot ? this.heads : this.trails
+      const i = hot ? liquid : solid
+      if (i >= batch.instanceMatrix.count) return
       this.tmpM.compose(this.tmpV, this.tmpQ, this.tmpS)
-      this.beads.setMatrixAt(i, this.tmpM)
-      this.beads.setColorAt(i, this.dripColors[color])
-      i++
+      batch.setMatrixAt(i, this.tmpM)
+      batch.setColorAt(i, this.dripColors[color])
+      if (hot) liquid++
+      else solid++
     }
-    const onSide = (theta: number, y: number, size: number, color: number, moving: boolean) => {
-      const out = r - size * 0.12
-      this.tmpV.set(Math.cos(theta) * out, y, Math.sin(theta) * out)
-      this.tmpQ.setFromAxisAngle(Y_AXIS, -theta)
-      this.tmpS.set(size * (moving ? 0.68 : 0.45), size * (moving ? 1.65 : 1.3), size)
-      place(color)
+    const onSide = (theta: number, y: number, fromTheta: number, fromY: number, size: number, color: number, hot = false) => {
+      const angle = (theta + fromTheta) * 0.5
+      const dx = (theta - fromTheta) * r
+      const dy = y - fromY
+      const length = Math.hypot(dx, dy)
+      const c = Math.cos(angle)
+      const s = Math.sin(angle)
+      this.radial.set(c, 0, s)
+      if (length > 0.00001) this.tangent.set(-s * dx, dy, c * dx).multiplyScalar(1 / length)
+      else this.tangent.copy(Y_AXIS)
+      this.cross.crossVectors(this.radial, this.tangent)
+      this.tmpQ.setFromRotationMatrix(this.tmpM.makeBasis(this.radial, this.tangent, this.cross))
+      this.tmpV.copy(this.radial).multiplyScalar(r + size * 0.05)
+      this.tmpV.y = (y + fromY) * 0.5
+      this.tmpS.set(size * 0.64, length * 0.65 + size * (hot ? 1.13 : 0.85), size * (hot ? 0.83 : 0.85))
+      place(color, hot)
     }
     for (const d of this.sim.drops) {
       this.tmpV.set(d.x, d.y, d.z)
-      this.tmpQ.identity()
-      this.tmpS.set(d.size * (d.landed ? 1.8 : 1), d.size * (d.landed ? 0.26 : 1.3), d.size * (d.landed ? 1.6 : 1))
-      place(d.color)
+      this.tmpQ.setFromAxisAngle(Y_AXIS, Math.atan2(d.x, d.z))
+      this.tmpS.set(d.size * (d.landed ? 2.1 : 0.8), d.size * (d.landed ? 0.25 : 1.25), d.size * (d.landed ? 1.56 : 0.8))
+      place(d.color, !d.landed)
     }
-    for (const d of this.sim.drips) onSide(d.theta, d.y, this.sim.size(d.mass), d.color, true)
-    for (const b of this.sim.beads) onSide(b.theta, b.y, b.size, b.color, false)
-    this.beads.count = i
-    this.beads.instanceMatrix.needsUpdate = true
-    if (this.beads.instanceColor) this.beads.instanceColor.needsUpdate = true
+    for (const b of this.sim.beads) onSide(b.theta, b.y, b.fromTheta, b.fromY, b.size, b.color)
+    for (const d of this.sim.drips) onSide(d.theta, d.y, d.trailTheta, d.trailY, this.sim.size(d.mass), d.color, true)
+    this.trails.count = solid
+    this.heads.count = liquid
+    for (const batch of [this.trails, this.heads]) {
+      batch.instanceMatrix.needsUpdate = true
+      if (batch.instanceColor) batch.instanceColor.needsUpdate = true
+    }
     this.sim.dirty = false
   }
 
@@ -366,14 +395,14 @@ const BOWL_R = 0.8
 const INCENSE_BASE = -0.25
 
 function ashGeometry() {
-  const geometry = new THREE.CylinderGeometry(0.021, 0.027, 1, 9, 8)
+  const geometry = new THREE.CylinderGeometry(0.028, 0.037, 1, 10, 9)
   const p = geometry.attributes.position
   const colors = new Float32Array(p.count * 3)
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), y = p.getY(i), z = p.getZ(i)
     const rough = Math.sin(Math.atan2(z, x) * 5 + y * 21) * Math.cos(y * 37)
     p.setXYZ(i, x * (1 + 0.19 * rough), y + 0.021 * rough, z * (1 + 0.19 * rough))
-    const tone = 0.58 + 0.35 * rough + 0.14 * Math.cos(y * 53)
+    const tone = 0.69 + 0.24 * rough + 0.16 * Math.cos(y * 53)
     colors.fill(tone, i * 3, (i + 1) * 3)
   }
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
@@ -398,11 +427,15 @@ class Incense implements Candle {
   private readonly smoke = new Smoke(500, new THREE.Color(0.8, 0.8, 0.82))
   private readonly ashBits: AshBit[] = []
   private readonly ashGeo = ashGeometry()
-  private readonly ashMat = new THREE.MeshStandardMaterial({ color: '#b8b4ad', roughness: 1, vertexColors: true })
+  private readonly attachedAshGeo = this.ashGeo.clone()
+  private readonly ashMat = new THREE.MeshStandardMaterial({
+    color: '#c5c9cd', emissive: '#9ca6b5', emissiveIntensity: 0.30, roughness: 1, vertexColors: true,
+  })
   private emitAcc = 0
   private readonly tmp = new THREE.Vector3()
-  private readonly smokeSource = new THREE.Vector3()
   private readonly ashAxis = new THREE.Vector3(0, 1, 0)
+  private readonly ashTangent = new THREE.Vector3()
+  private readonly smokeSource = new THREE.Vector3()
 
   constructor() {
     this.group.add(burner())
@@ -419,7 +452,8 @@ class Incense implements Candle {
     this.coat.position.y = INCENSE_BASE + BARE
     this.group.add(this.coat)
 
-    this.ashMesh = new THREE.Mesh(this.ashGeo, this.ashMat)
+    this.ashMesh = new THREE.Mesh(this.attachedAshGeo, this.ashMat)
+    this.ashMesh.frustumCulled = false
     this.group.add(this.ashMesh)
 
     this.emberMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.3, 0.05), transparent: true, toneMapped: false })
@@ -474,9 +508,18 @@ class Incense implements Candle {
     this.coat.scale.y = coatLen
     this.ember.position.y = top
     this.ashMesh.visible = ash > 0.005
-    this.ashMesh.scale.y = Math.max(0.001, ash)
-    this.ashMesh.position.set(0, top, 0).addScaledVector(this.ashAxis, ash / 2)
-    this.ashMesh.quaternion.setFromUnitVectors(Y_AXIS, this.ashAxis)
+    this.ashMesh.position.y = top
+    if (this.ashMesh.visible) {
+      const from = this.ashGeo.attributes.position
+      const to = this.attachedAshGeo.attributes.position
+      for (let i = 0; i < from.count; i++) {
+        const u = from.getY(i) + 0.5
+        const curve = ash * u * u
+        to.setXYZ(i, from.getX(i) + curve * this.ashAxis.x, u * ash + curve * (this.ashAxis.y - 1), from.getZ(i) + curve * this.ashAxis.z)
+      }
+      to.needsUpdate = true
+      this.attachedAshGeo.computeVertexNormals()
+    }
     this.glow.position.y = top
     this.emberLight.position.y = top + 0.05
   }
@@ -524,15 +567,17 @@ class Incense implements Candle {
     for (const size of pieces) {
       const mesh = new THREE.Mesh(this.ashGeo, this.ashMat)
       mesh.scale.y = size
-      mesh.position.set(0, this.burn.top, 0).addScaledVector(this.ashAxis, offset + size / 2)
-      mesh.quaternion.setFromUnitVectors(Y_AXIS, this.ashAxis)
+      const u = (offset + size / 2) / len
+      const curve = u * u * len
+      mesh.position.set(curve * this.ashAxis.x, this.burn.top + u * len + curve * (this.ashAxis.y - 1), curve * this.ashAxis.z)
+      this.ashTangent.set(2 * u * this.ashAxis.x, 1 + 2 * u * (this.ashAxis.y - 1), 2 * u * this.ashAxis.z).normalize()
+      mesh.quaternion.setFromUnitVectors(Y_AXIS, this.ashTangent)
       offset += size
       this.group.add(mesh)
-      const v = env.gravity.clone().multiplyScalar(0.22)
-      v.x += (Math.random() - 0.5) * 0.3
-      v.z += (Math.random() - 0.5) * 0.3
+      const v = env.gravity.clone().multiplyScalar(0.16)
+      v.x += (Math.random() - 0.5) * 0.21
+      v.z += (Math.random() - 0.5) * 0.21
       this.ashBits.push({ mesh, vel: v, spin: new THREE.Vector3(Math.random() * 7 - 3.5, 0, Math.random() * 7 - 3.5), resting: false, age: 0 })
-      if (this.ashBits.length > 24) this.group.remove(this.ashBits.shift()!.mesh)
     }
   }
 
@@ -541,19 +586,45 @@ class Incense implements Candle {
       const b = this.ashBits[i]
       b.age += dt
       if (b.resting) continue
+      const previousY = b.mesh.position.y
       b.vel.addScaledVector(env.gravity, 9.8 * dt * 0.5)
       b.mesh.position.addScaledVector(b.vel, dt)
       b.mesh.rotation.x += b.spin.x * dt
       b.mesh.rotation.z += b.spin.z * dt
       const p = b.mesh.position
-      if (p.y <= SAND_Y + 0.03 && b.vel.y < 0 && Math.hypot(p.x, p.z) < BOWL_R) {
-        p.y = SAND_Y + 0.02
+      if (previousY > SAND_Y + 0.03 && p.y <= SAND_Y + 0.03 && b.vel.y < 0 && Math.hypot(p.x, p.z) < 0.91) {
+        this.clampToSand(p, 0.026)
         b.mesh.rotation.set(Math.PI / 2, Math.random() * Math.PI, 0)
         b.resting = true
+        if (b.mesh.scale.y > 0.065) this.scatterAsh(p)
       } else if (b.age > 4) {
         this.group.remove(b.mesh)
         this.ashBits.splice(i, 1)
       }
+    }
+    while (this.ashBits.length > 64) this.group.remove(this.ashBits.shift()!.mesh)
+  }
+
+  private clampToSand(p: THREE.Vector3, height: number) {
+    const r = Math.hypot(p.x, p.z)
+    if (r > BOWL_R) {
+      p.x *= BOWL_R / r
+      p.z *= BOWL_R / r
+    }
+    p.y = SAND_Y + height
+  }
+
+  private scatterAsh(at: THREE.Vector3) {
+    for (let i = 0; i < 3; i++) {
+      const mesh = new THREE.Mesh(this.ashGeo, this.ashMat)
+      const angle = Math.random() * Math.PI * 2
+      const distance = 0.035 + Math.random() * 0.095
+      mesh.position.set(at.x + Math.cos(angle) * distance, 0, at.z + Math.sin(angle) * distance)
+      this.clampToSand(mesh.position, 0.013)
+      mesh.rotation.set(Math.PI / 2, angle, 0)
+      mesh.scale.set(0.36 + Math.random() * 0.16, 0.024 + Math.random() * 0.032, 0.36)
+      this.group.add(mesh)
+      this.ashBits.push({ mesh, vel: new THREE.Vector3(), spin: new THREE.Vector3(), resting: true, age: 0 })
     }
   }
 

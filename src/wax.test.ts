@@ -45,6 +45,26 @@ describe('DripSim', () => {
     expect(sim.drops).toEqual([drop])
   })
 
+  it('leaves connected, tapering wax and joins nearby deposits on the holder', () => {
+    const sim = new DripSim(0.5)
+    const g = { x: 0, y: -1, z: 0 }
+    sim.spawn(0, 0.55, 1)
+    step(sim, g, 0.55, 2)
+    expect(sim.beads.length).toBeGreaterThan(4)
+    const first = sim.beads[0]
+    const last = sim.beads[sim.beads.length - 1]
+    expect(last.size).toBeLessThan(first.size)
+    expect(sim.beads[1].fromY).toBe(first.y)
+    expect(sim.drops).toHaveLength(1)
+    const firstSize = sim.drops[0].size
+    const firstTrailLength = sim.beads.length
+    sim.spawn(0, 0.55, 1)
+    step(sim, g, 0.55, 2)
+    expect(sim.drops).toHaveLength(1)
+    expect(sim.drops[0].size).toBeGreaterThan(firstSize)
+    expect(sim.beads).toHaveLength(firstTrailLength)
+  })
+
   it('melts beads above the burning top', () => {
     const sim = new DripSim(0.5)
     sim.spawn(0, 2, 1)
