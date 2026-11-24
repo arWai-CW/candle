@@ -136,6 +136,15 @@ describe('BlowDetector', () => {
     expect(run(d, { ...gust, level: -12 }, 0.13)).toBe(false)
     expect(pulse(d, gust, 0.14)).toBe(true)
   })
+
+  it('does not mistake returning room noise for a gust after a brief dip', () => {
+    const d = new BlowDetector(1.6)
+    const ambient = { ...gust, level: -30 }
+    run(d, ambient, 2)
+    expect(run(d, room, 0.35)).toBe(false)
+    expect(run(d, ambient, 0.5)).toBe(false)
+    expect(run(d, room, 0.25)).toBe(false)
+  })
 })
 
 describe('MicInput', () => {
