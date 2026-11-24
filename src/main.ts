@@ -23,10 +23,30 @@ renderer.setClearColor(0x080605)
 const scene = new THREE.Scene()
 scene.fog = new THREE.Fog(0x080605, 9, 22)
 const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 60)
-scene.add(new THREE.HemisphereLight(0x6a5a4a, 0x0a0806, 0.35))
+// A quiet studio fill keeps the materials readable without competing with the flame.
+scene.add(new THREE.HemisphereLight(0xdce5ef, 0x32241c, 0.85))
+const key = new THREE.DirectionalLight(0xffe5ca, 2.1)
+key.position.set(-3, 5, 4)
+scene.add(key)
+const rim = new THREE.DirectionalLight(0xb8cce5, 0.65)
+rim.position.set(3, 3, -2)
+scene.add(rim)
 
 const table = new THREE.Mesh(new THREE.PlaneGeometry(60, 60).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#2a1d15', roughness: 0.7 }))
 scene.add(table)
+
+// Soft contact shading grounds the objects without six shadow-map renders per flame.
+const contactCanvas = document.createElement('canvas')
+contactCanvas.width = contactCanvas.height = 128
+const contactCtx = contactCanvas.getContext('2d')!
+const contactGradient = contactCtx.createRadialGradient(64, 64, 8, 64, 64, 64)
+contactGradient.addColorStop(0, 'rgba(0,0,0,0.65)')
+contactGradient.addColorStop(0.55, 'rgba(0,0,0,0.4)')
+contactGradient.addColorStop(1, 'rgba(0,0,0,0)')
+contactCtx.fillStyle = contactGradient
+contactCtx.fillRect(0, 0, 128, 128)
+const contact = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(contactCanvas), transparent: true, depthWrite: false }))
+scene.add(contact)
 
 let candle: CandleWithView = createCandle('birthday')
 scene.add(candle.group)
@@ -177,6 +197,8 @@ function resize() {
   camera.lookAt(f.centre)
   camera.updateProjectionMatrix()
   table.position.y = candle.kind === 'incense' ? -0.55 : -0.06
+  contact.position.y = table.position.y + 0.003
+  contact.scale.setScalar(candle.kind === 'birthday' ? 1.1 : 2.7)
   candle.setViewportHeight(h * renderer.getPixelRatio())
 }
 window.addEventListener('resize', resize)

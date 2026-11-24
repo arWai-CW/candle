@@ -17,6 +17,7 @@ void main() {
   float sz = sin(tt * 8.3 + 2.0 + p.y * 7.0) * 0.5 + sin(tt * 17.9) * 0.3 + sin(tt * 29.1 + p.y * 13.0) * 0.2;
   float amp = uFlicker * t * t * uHeight * 0.14;
   p.x += sx * amp;
+  p.x += sin(tt * 2.3 + t * 5.0) * t * t * uHeight * 0.055;
   p.z += sz * amp;
   p.y *= 1.0 + uFlicker * 0.07 * sin(tt * 11.0) * sin(tt * 3.7);
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
@@ -40,7 +41,7 @@ void main() {
   float edge = pow(facing, uEdgePower);
   vec3 col = mix(uBase, uMid, smoothstep(0.02, 0.28, vT));
   col = mix(col, uTip, smoothstep(0.45, 1.0, vT));
-  float alpha = edge * (1.0 - smoothstep(0.65, 1.0, vT)) * (0.35 + 0.65 * smoothstep(0.0, 0.12, vT));
+  float alpha = edge * (1.0 - smoothstep(0.88, 1.0, vT)) * (0.22 + 0.78 * smoothstep(0.0, 0.16, vT));
   gl_FragColor = vec4(col, alpha * uIntensity);
 }
 `
@@ -110,7 +111,7 @@ export class Flame {
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
-      side: THREE.DoubleSide,
+      side: THREE.FrontSide,
       toneMapped: false,
     }
     const seed = Math.random() * 100
@@ -123,11 +124,11 @@ export class Flame {
         uFlicker: { value: 1 },
         uHeight: { value: height },
         uSeed: { value: seed },
-        uIntensity: { value: 1 },
-        uEdgePower: { value: 1.6 },
-        uBase: { value: new THREE.Color(0.12, 0.2, 0.85) },
-        uMid: { value: new THREE.Color(1.0, 0.55, 0.14) },
-        uTip: { value: new THREE.Color(0.85, 0.25, 0.04) },
+        uIntensity: { value: 0.9 },
+        uEdgePower: { value: 0.85 },
+        uBase: { value: new THREE.Color(0.12, 0.17, 0.62) },
+        uMid: { value: new THREE.Color(1.0, 0.48, 0.055) },
+        uTip: { value: new THREE.Color(1.0, 0.24, 0.025) },
       },
     })
     this.inner = new THREE.ShaderMaterial({
@@ -137,17 +138,17 @@ export class Flame {
       uniforms: {
         uTime: { value: 0 },
         uFlicker: { value: 1 },
-        uHeight: { value: height * 0.62 },
+        uHeight: { value: height * 0.7 },
         uSeed: { value: seed },
-        uIntensity: { value: 1 },
+        uIntensity: { value: 0.9 },
         uEdgePower: { value: 0.7 },
         uBase: { value: new THREE.Color(0.3, 0.42, 1.0) },
-        uMid: { value: new THREE.Color(1.0, 0.93, 0.7) },
-        uTip: { value: new THREE.Color(1.0, 0.75, 0.35) },
+        uMid: { value: new THREE.Color(1.0, 0.84, 0.48) },
+        uTip: { value: new THREE.Color(1.0, 0.66, 0.17) },
       },
     })
     const outerMesh = new THREE.Mesh(teardrop(height, width), this.outer)
-    const innerMesh = new THREE.Mesh(teardrop(height * 0.62, width * 0.55), this.inner)
+    const innerMesh = new THREE.Mesh(teardrop(height * 0.7, width * 0.48), this.inner)
     innerMesh.position.y = height * 0.04
     outerMesh.renderOrder = 2
     innerMesh.renderOrder = 3
@@ -203,10 +204,10 @@ export class Flame {
     this.halo.position.copy(centre)
     const gs = this.height * 2.2 * lvl * flick
     this.glow.scale.set(gs, gs, 1)
-    this.glow.material.opacity = 0.55 * lvl
+    this.glow.material.opacity = 0.28 * lvl
     const hs = this.height * 7 * lvl * (0.95 + 0.05 * flick)
     this.halo.scale.set(hs, hs, 1)
-    this.halo.material.opacity = 0.14 * lvl
+    this.halo.material.opacity = 0.07 * lvl
     this.light.position.copy(centre)
     this.light.intensity = this.lightIntensity * lvl * flick
   }
