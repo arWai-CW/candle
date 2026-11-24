@@ -230,7 +230,8 @@ class WaxCandle implements Candle {
     molten.depthWrite = false
     const pooled = waxMaterial('#ffffff', this.glowUniforms, undefined, 0.075)
     pooled.roughness = 0.48
-    this.trails = new THREE.InstancedMesh(blob, sideWax, this.sim.maxBeads)
+    // Straight-sided links keep cooled runoff continuous; stretched spheres leave scalloped seams.
+    this.trails = new THREE.InstancedMesh(new THREE.CylinderGeometry(1, 1, 2, 10, 1), sideWax, this.sim.maxBeads)
     this.heads = new THREE.InstancedMesh(blob, molten, 64)
     this.deposits = new THREE.InstancedMesh(blob, pooled, 32)
     this.runoffColors = this.stripes ? [new THREE.Color(stripeColor), new THREE.Color(spec.waxColor)] : undefined
@@ -383,7 +384,7 @@ class WaxCandle implements Candle {
       this.tmpQ.setFromRotationMatrix(this.tmpM.makeBasis(this.radial, this.tangent, this.cross))
       this.tmpV.copy(this.radial).multiplyScalar(r + size * 0.05)
       this.tmpV.y = (y + fromY) * 0.5
-      this.tmpS.set(size * 0.64, length * 0.65 + size * (hot ? 1.13 : 0.85), size * (hot ? 0.83 : 0.85))
+      this.tmpS.set(size * 0.64, hot ? length * 0.65 + size * 1.13 : length * 0.5 + size * 0.12, size * (hot ? 0.83 : 0.85))
       place(hot ? this.heads : this.trails, this.runoffColors?.[color])
     }
     for (const d of this.sim.drops) {
