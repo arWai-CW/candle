@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import './style.css'
 import { createAnimationLoop } from './animation'
-import { BlowDetector, MicInput } from './blow'
+import { BlowDetector, DEFAULT_BLOW_SENSITIVITY, MAX_BLOW_SENSITIVITY, MicInput } from './blow'
 import { createCandle, type Candle, type CandleKind } from './candles'
 import { MotionResponse, requestSensorAccess } from './motion'
 
@@ -110,7 +110,8 @@ window.addEventListener('keyup', (e) => {
 let mic: MicInput | null = null
 const holdHint = '㩒住螢幕吹熄'
 const SENS_KEY = 'candle.sensitivity'
-const detector = new BlowDetector(Number(localStorage.getItem(SENS_KEY)) || 1.6)
+const detector = new BlowDetector(Math.min(MAX_BLOW_SENSITIVITY, Number(localStorage.getItem(SENS_KEY)) || DEFAULT_BLOW_SENSITIVITY))
+sensInput.max = String(MAX_BLOW_SENSITIVITY)
 sensInput.value = String(detector.sensitivity)
 sensInput.addEventListener('input', () => {
   detector.sensitivity = Number(sensInput.value)

@@ -1,15 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { BlowDetector, MicInput, type BlowFrame } from './blow'
+import { BlowDetector, DEFAULT_BLOW_SENSITIVITY, MAX_BLOW_SENSITIVITY, MicInput, type BlowFrame } from './blow'
 
-function run(d: BlowDetector, frame: Omit<BlowFrame, 'flatness'> & { flatness?: number }, seconds: number) {
+type TestFrame = Pick<BlowFrame, 'level' | 'lowRatio'> & Partial<BlowFrame>
+const noRumble = { rumbleRatio: 0, rumbleFlatness: 0, rumbleTailRatio: 0 }
+
+function run(d: BlowDetector, frame: TestFrame, seconds: number) {
   let blown = false
-  for (let t = 0; t < seconds; t += 1 / 60) blown = d.update({ flatness: 0.45, ...frame }, 1 / 60).blown || blown
+  for (let t = 0; t < seconds; t += 1 / 60) {
+    blown = d.update({ flatness: 0.45, ...noRumble, ...frame }, 1 / 60).blown || blown
+  }
   return blown
 }
 
 const room = { level: -56, lowRatio: 0.5 }
 const gust = { level: -24, lowRatio: 0.6 }
-type TestFrame = Parameters<typeof run>[1]
 
 function pulse(d: BlowDetector, frame: TestFrame, seconds: number, ambient = room) {
   const during = run(d, frame, seconds)
@@ -72,12 +76,59 @@ describe('BlowDetector', () => {
     expect(pulse(d, { ...gust, level: -39 }, 0.35)).toBe(true)
   })
 
+  it('detects a short soft rumbling puff at max sensitivity without loosening the default', () => {
+    const puff = { level: -45, lowRatio: 0.9, flatness: 0.1, rumbleRatio: 0.8, rumbleFlatness: 0.25, rumbleTailRatio: 0.18 }
+    const normal = new BlowDetector(DEFAULT_BLOW_SENSITIVITY)
+    const keen = new BlowDetector(MAX_BLOW_SENSITIVITY)
+    run(normal, room, 0.5)
+    run(keen, room, 0.5)
+    expect(pulse(normal, puff, 0.17)).toBe(false)
+    expect(pulse(keen, puff, 0.17)).toBe(true)
+  })
+
+  it('detects a puff just four decibels above a quiet floor at max sensitivity', () => {
+    const d = new BlowDetector(MAX_BLOW_SENSITIVITY)
+    const quiet = { ...room, level: -63 }
+    run(d, quiet, 0.5)
+    expect(pulse(d, { ...gust, level: -59 }, 0.19, quiet)).toBe(true)
+  })
+
+  it('confirms both a soft breath and a louder breath against the same background', () => {
+    const ambient = { ...room, level: -44 }
+    for (const level of [-40, -39]) {
+      const d = new BlowDetector(MAX_BLOW_SENSITIVITY)
+      run(d, ambient, 1)
+      expect(pulse(d, { ...gust, level }, 0.4, ambient), `breath at ${level} dBFS`).toBe(true)
+    }
+  })
+
+  it('rejects tonal rumble and loud stationary noise at max sensitivity', () => {
+    const d = new BlowDetector(MAX_BLOW_SENSITIVITY)
+    run(d, room, 0.5)
+    expect(pulse(d, { ...gust, flatness: 0.05, rumbleRatio: 0.9, rumbleFlatness: 0.05, rumbleTailRatio: 0.18 }, 0.5)).toBe(false)
+    expect(run(d, { ...gust, level: -8 }, 4)).toBe(false)
+  })
+
+  it('rejects bass with a quiet spectral tail at max sensitivity', () => {
+    const d = new BlowDetector(MAX_BLOW_SENSITIVITY)
+    run(d, room, 0.5)
+    const bass = { level: -39, lowRatio: 0.98, flatness: 0.03, rumbleRatio: 0.96, rumbleFlatness: 0.25, rumbleTailRatio: 0.03 }
+    expect(run(d, bass, 0.2)).toBe(false)
+    expect(pulse(d, { ...bass, level: -25 }, 0.2)).toBe(false)
+  })
+
+  it('keeps the normal hold time for loud sounds without a wind spectrum', () => {
+    const d = new BlowDetector(MAX_BLOW_SENSITIVITY)
+    run(d, room, 0.5)
+    expect(pulse(d, { ...gust, level: -21, lowRatio: 0.3 }, 0.17)).toBe(false)
+  })
+
   it('extinguishes when a qualifying soft gust tapers slowly below the gate', () => {
     const d = new BlowDetector(1.6)
     run(d, room, 0.5)
     let blown = run(d, { ...gust, level: -44 }, 0.35)
     for (let frame = 1; frame <= 60; frame++) {
-      blown = d.update({ ...gust, flatness: 0.45, level: -44 - frame * 0.2 }, 1 / 60).blown || blown
+      blown = d.update({ ...gust, flatness: 0.45, ...noRumble, level: -44 - frame * 0.2 }, 1 / 60).blown || blown
     }
     expect(blown).toBe(true)
   })
@@ -117,6 +168,15 @@ describe('BlowDetector', () => {
     expect(run(d, gust, 1.5)).toBe(false)
     expect(run(d, room, 0.35)).toBe(false)
     expect(pulse(d, gust, 0.35)).toBe(true)
+  })
+
+  it('rearms at max sensitivity after the background settles five decibels louder', () => {
+    const d = new BlowDetector(MAX_BLOW_SENSITIVITY)
+    const newAmbient = { ...room, level: room.level + 5 }
+    run(d, room, 0.5)
+    expect(pulse(d, gust, 0.35, newAmbient)).toBe(true)
+    expect(run(d, newAmbient, 0.75)).toBe(false)
+    expect(pulse(d, gust, 0.35, newAmbient)).toBe(true)
   })
 
   it('learns a stationary broadband sound that starts after calibration without blowing out', () => {
@@ -161,7 +221,7 @@ describe('BlowDetector', () => {
     run(d, room, 0.5)
     let blown = false
     for (let t = 0; t < 3.2; t += 1 / 60) {
-      const frame = { ...gust, flatness: 0.45, level: -42 + 6 * t }
+      const frame = { ...gust, flatness: 0.45, ...noRumble, level: -42 + 6 * t }
       blown = d.update(frame, 1 / 60).blown || blown
     }
     expect(blown).toBe(true)
@@ -208,6 +268,9 @@ describe('MicInput', () => {
     const starting = MicInput.start()
     expect(resume).toHaveBeenCalledOnce()
     expect(getUserMedia).toHaveBeenCalledOnce()
+    expect(getUserMedia).toHaveBeenCalledWith({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    })
     await expect(starting).rejects.toBe(error)
     expect(close).toHaveBeenCalledOnce()
   })
