@@ -93,6 +93,15 @@ describe('BlowDetector', () => {
     expect(pulse(d, { ...gust, level: -59 }, 0.19, quiet)).toBe(true)
   })
 
+  it('confirms both a soft breath and a louder breath against the same background', () => {
+    const ambient = { ...room, level: -44 }
+    for (const level of [-40, -39]) {
+      const d = new BlowDetector(MAX_BLOW_SENSITIVITY)
+      run(d, ambient, 1)
+      expect(pulse(d, { ...gust, level }, 0.4, ambient), `breath at ${level} dBFS`).toBe(true)
+    }
+  })
+
   it('rejects tonal rumble and loud stationary noise at max sensitivity', () => {
     const d = new BlowDetector(MAX_BLOW_SENSITIVITY)
     run(d, room, 0.5)

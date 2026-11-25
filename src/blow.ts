@@ -92,7 +92,8 @@ export class BlowDetector {
     if (this.armed && (blowLike || this.candidateAge > 0)) {
       this.candidateAge += dt
       this.peak = Math.max(this.peak, this.envelope)
-      const envelopeDrop = this.peak <= softLevel ? 6 - 3 * boost : 6
+      const quietDrop = Math.min(6, Math.max(3, (this.peak - this.floor) * 0.75))
+      const envelopeDrop = 6 + (quietDrop - 6) * boost
       this.sustained = blowLike ? Math.min(holdSeconds, this.sustained + dt * holdRate) : Math.max(0, this.sustained - dt * 2)
       if (this.sustained >= holdSeconds) this.qualificationLevel ??= this.envelope
       const qualifiedAt = this.qualificationLevel
