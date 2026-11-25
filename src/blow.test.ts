@@ -161,6 +161,15 @@ describe('BlowDetector', () => {
     expect(pulse(d, gust, 0.35)).toBe(true)
   })
 
+  it('rearms at max sensitivity after the background settles five decibels louder', () => {
+    const d = new BlowDetector(MAX_BLOW_SENSITIVITY)
+    const newAmbient = { ...room, level: room.level + 5 }
+    run(d, room, 0.5)
+    expect(pulse(d, gust, 0.35, newAmbient)).toBe(true)
+    expect(run(d, newAmbient, 0.75)).toBe(false)
+    expect(pulse(d, gust, 0.35, newAmbient)).toBe(true)
+  })
+
   it('learns a stationary broadband sound that starts after calibration without blowing out', () => {
     const d = new BlowDetector(1.6)
     run(d, room, 0.5)

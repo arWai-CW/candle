@@ -81,11 +81,10 @@ export class BlowDetector {
     this.strength += (clamp01(raw) - this.strength) * Math.min(1, dt / tau)
 
     if (!this.armed) {
+      if (excess <= 6) this.learnFloor(frame.level, dt, excess < 0 ? 6 : 0.25)
       this.released = frame.level < Math.max(this.floor + Math.min(6, minExcess), minLevel) ? this.released + dt : 0
       if (this.released >= 0.15) this.armed = true
-    }
-
-    if (!blowLike && this.armed && this.candidateAge === 0) {
+    } else if (!blowLike && this.candidateAge === 0) {
       this.learnFloor(frame.level, dt, excess < 0 ? 6 : 2.5)
     }
 
