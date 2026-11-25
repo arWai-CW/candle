@@ -9,6 +9,8 @@ export interface BlowFrame {
   rumbleRatio: number
   /** The lower of the rumble and higher-frequency tail flatness scores, 0..1. */
   rumbleFlatness: number
+  /** Power from 375 to 1600 Hz relative to the rumble power. */
+  rumbleTailRatio: number
 }
 
 export interface BlowState {
@@ -61,8 +63,8 @@ export class BlowDetector {
 
     const s = Math.max(0.25, this.sensitivity)
     const boost = clamp01((s - DEFAULT_BLOW_SENSITIVITY) / (MAX_BLOW_SENSITIVITY - DEFAULT_BLOW_SENSITIVITY))
-    const holdSeconds = 0.22 - 0.1 * boost
-    const envelopeDrop = 6 - 3 * boost
+    const holdSeconds = 0.22
+    const softLevel = -40
     const excess = frame.level - this.floor
     const minLevel = Math.max(-58 - 4 * boost, -34 - (s < 1 ? 12 : 18) * (s - 1))
     const minRatio = Math.max(0.15, 0.28 - 0.05 * (s - 1))
@@ -70,8 +72,9 @@ export class BlowDetector {
     const overGate = frame.level > minLevel && excess > minExcess
     const broadband = frame.lowRatio > minRatio && frame.flatness > 0.19
     const turbulent = boost > 0 && frame.rumbleRatio > 0.8 - 0.22 * boost &&
-      frame.rumbleFlatness > 0.30 - 0.16 * boost
+      frame.rumbleFlatness > 0.30 - 0.16 * boost && frame.rumbleTailRatio > 0.06
     const blowLike = overGate && (broadband || turbulent)
+    const holdRate = frame.level <= softLevel || turbulent ? holdSeconds / (holdSeconds - 0.10 * boost) : 1
     const raw = blowLike && this.armed ? clamp01(((excess - 10 / s) / 30) * s) : 0
 
     const tau = raw > this.strength ? 0.04 : 0.25
@@ -90,7 +93,8 @@ export class BlowDetector {
     if (this.armed && (blowLike || this.candidateAge > 0)) {
       this.candidateAge += dt
       this.peak = Math.max(this.peak, this.envelope)
-      this.sustained = blowLike ? Math.min(holdSeconds, this.sustained + dt) : Math.max(0, this.sustained - dt * 2)
+      const envelopeDrop = this.peak <= softLevel ? 6 - 3 * boost : 6
+      this.sustained = blowLike ? Math.min(holdSeconds, this.sustained + dt * holdRate) : Math.max(0, this.sustained - dt * 2)
       if (this.sustained >= holdSeconds) this.qualificationLevel ??= this.envelope
       const qualifiedAt = this.qualificationLevel
 
@@ -221,6 +225,7 @@ export class MicInput {
       lowRatio: total > 0 ? low / total : 0,
       flatness: spectralFlatness(bandPower, bandLogPower, bandBins),
       rumbleRatio: total > 0 ? rumblePower / total : 0,
+      rumbleTailRatio: rumblePower > 0 ? tailPower / rumblePower : 0,
       rumbleFlatness: Math.min(
         spectralFlatness(rumblePower, rumbleLogPower, rumbleBins),
         spectralFlatness(tailPower, tailLogPower, tailBins),
