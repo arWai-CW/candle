@@ -5,6 +5,10 @@ export interface BlowFrame {
   lowRatio: number
   /** Spectral flatness from 140 to 1600 Hz, 0..1. */
   flatness: number
+  /** Share of spectral power from 40 to 375 Hz, 0..1. */
+  rumbleRatio: number
+  /** The lower of the rumble and higher-frequency tail flatness scores, 0..1. */
+  rumbleFlatness: number
 }
 
 export interface BlowState {
@@ -15,6 +19,11 @@ export interface BlowState {
 }
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v))
+const spectralFlatness = (power: number, logPower: number, bins: number) =>
+  power > 1e-16 * bins ? Math.pow(10, logPower / (10 * bins)) / (power / bins) : 0
+
+export const DEFAULT_BLOW_SENSITIVITY = 1.6
+export const MAX_BLOW_SENSITIVITY = 3
 
 /**
  * Turns microphone frames into a wind strength and a "blown out" trigger.
@@ -33,10 +42,7 @@ export class BlowDetector {
   private released = 0
   private armed = true
 
-  constructor(
-    public sensitivity = 1,
-    private readonly holdSeconds = 0.22,
-  ) {}
+  constructor(public sensitivity = 1) {}
 
   get ready() {
     return this.calibration <= 0 || this.calibrationTimeout <= 0
@@ -54,19 +60,25 @@ export class BlowDetector {
     }
 
     const s = Math.max(0.25, this.sensitivity)
+    const boost = clamp01((s - DEFAULT_BLOW_SENSITIVITY) / (MAX_BLOW_SENSITIVITY - DEFAULT_BLOW_SENSITIVITY))
+    const holdSeconds = 0.22 - 0.1 * boost
+    const envelopeDrop = 6 - 3 * boost
     const excess = frame.level - this.floor
-    const minLevel = Math.max(-58, -34 - (s < 1 ? 12 : 18) * (s - 1))
+    const minLevel = Math.max(-58 - 4 * boost, -34 - (s < 1 ? 12 : 18) * (s - 1))
     const minRatio = Math.max(0.15, 0.28 - 0.05 * (s - 1))
-    const minExcess = 14 / s
+    const minExcess = 14 / s - 1.3 * boost
     const overGate = frame.level > minLevel && excess > minExcess
-    const blowLike = frame.lowRatio > minRatio && frame.flatness > 0.19 && overGate
+    const broadband = frame.lowRatio > minRatio && frame.flatness > 0.19
+    const turbulent = boost > 0 && frame.rumbleRatio > 0.8 - 0.22 * boost &&
+      frame.rumbleFlatness > 0.30 - 0.16 * boost
+    const blowLike = overGate && (broadband || turbulent)
     const raw = blowLike && this.armed ? clamp01(((excess - 10 / s) / 30) * s) : 0
 
     const tau = raw > this.strength ? 0.04 : 0.25
     this.strength += (clamp01(raw) - this.strength) * Math.min(1, dt / tau)
 
     if (!this.armed) {
-      this.released = frame.level < Math.max(this.floor + 6, minLevel) ? this.released + dt : 0
+      this.released = frame.level < Math.max(this.floor + Math.min(6, minExcess), minLevel) ? this.released + dt : 0
       if (this.released >= 0.15) this.armed = true
     }
 
@@ -78,8 +90,8 @@ export class BlowDetector {
     if (this.armed && (blowLike || this.candidateAge > 0)) {
       this.candidateAge += dt
       this.peak = Math.max(this.peak, this.envelope)
-      this.sustained = blowLike ? Math.min(this.holdSeconds, this.sustained + dt) : Math.max(0, this.sustained - dt * 2)
-      if (this.sustained >= this.holdSeconds) this.qualificationLevel ??= this.envelope
+      this.sustained = blowLike ? Math.min(holdSeconds, this.sustained + dt) : Math.max(0, this.sustained - dt * 2)
+      if (this.sustained >= holdSeconds) this.qualificationLevel ??= this.envelope
       const qualifiedAt = this.qualificationLevel
 
       if (this.candidateAge >= 3.2) {
@@ -87,7 +99,7 @@ export class BlowDetector {
         if (this.envelope - this.floor <= 2) this.resetCandidate()
       } else if (qualifiedAt !== undefined && (
         (blowLike && this.envelope - qualifiedAt >= 6) ||
-        ((blowLike || !overGate) && this.peak - this.envelope >= 6)
+        ((blowLike || !overGate) && this.peak - this.envelope >= envelopeDrop)
       )) {
         blown = true
         this.resetCandidate()
@@ -177,21 +189,42 @@ export class MicInput {
     let bandPower = 0
     let bandLogPower = 0
     let bandBins = 0
+    let rumblePower = 0
+    let rumbleLogPower = 0
+    let rumbleBins = 0
+    let tailPower = 0
+    let tailLogPower = 0
+    let tailBins = 0
     for (let i = 1; i < this.freq.length && i * binHz < 8000; i++) {
       const hz = i * binHz
       const p = Math.pow(10, this.freq[i] / 10)
       total += p
       if (hz < 600) low += p
+      const logPower = Math.max(-160, this.freq[i])
+      if (hz >= 40 && hz < 375) {
+        rumblePower += p
+        rumbleLogPower += logPower
+        rumbleBins++
+      } else if (hz >= 375 && hz < 1600) {
+        tailPower += p
+        tailLogPower += logPower
+        tailBins++
+      }
       if (hz >= 140 && hz < 1600) {
         bandPower += p
-        bandLogPower += Math.max(-160, this.freq[i])
+        bandLogPower += logPower
         bandBins++
       }
     }
     return {
       level,
       lowRatio: total > 0 ? low / total : 0,
-      flatness: bandPower > 1e-16 * bandBins ? Math.pow(10, bandLogPower / (10 * bandBins)) / (bandPower / bandBins) : 0,
+      flatness: spectralFlatness(bandPower, bandLogPower, bandBins),
+      rumbleRatio: total > 0 ? rumblePower / total : 0,
+      rumbleFlatness: Math.min(
+        spectralFlatness(rumblePower, rumbleLogPower, rumbleBins),
+        spectralFlatness(tailPower, tailLogPower, tailBins),
+      ),
     }
   }
 }
